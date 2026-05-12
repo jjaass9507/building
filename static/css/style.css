@@ -1,0 +1,22 @@
+/* 隱藏捲軸但保留功能 */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+@keyframes slideInRight {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+.slide-in-right { animation: slideInRight 0.3s ease-out forwards; }
+
+/* 優化點擊區域樣式 */
+.grid-cell {
+    transition: all 0.2s ease;
+}
+.grid-cell:active {
+    transform: scale(0.98);
+}
+
+/* 手機版橫向捲動優化 */
+.overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+}
