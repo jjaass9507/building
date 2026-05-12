@@ -16,8 +16,10 @@
 - **側邊資訊面板**：點擊樓層或廠棟後，可顯示更詳細的資料摘要。
 - **Windows AD 身份辨識**：透過 IIS Windows Integrated Authentication 取得 `REMOTE_USER`。
 - **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`。
+- **Admin 網頁上傳更新資料**：admin 可直接在頁面上傳樓層面積 Excel，系統自動清洗並更新 `data.json`。
+- **資料版本留存**：每次更新前會先把上一版 `data.json` 備份到 `data_backups/`。
 - **IIS / FastCGI 部署支援**：已包含 `web.config` 設定範例。
-- **存取紀錄**：後端會記錄使用者帳號、IP、操作與權限拒絕紀錄至 `access_log.txt`。
+- **存取紀錄**：後端會記錄使用者帳號、IP、操作、上傳與權限拒絕紀錄至 `access_log.txt`。
 
 ---
 
@@ -27,6 +29,8 @@
 
 - Python
 - Flask
+- Pandas
+- OpenPyXL
 - JSON API
 - IIS FastCGI / wfastcgi 部署設定
 - Windows Integrated Authentication / `REMOTE_USER`
@@ -47,12 +51,17 @@
 ```text
 building/
 ├── app.py
+├── data_processor.py          # Excel 清洗與 data.json 轉換邏輯
 ├── web.config
 ├── README.md
+├── requirements.txt
 ├── permissions.json           # 角色權限設定檔
 ├── data.json                  # 執行時資料檔，需自行放置於專案根目錄
 ├── access_log.txt             # 執行後自動產生的使用者存取紀錄
 ├── app.log                    # IIS / wfastcgi log，依 web.config 設定產生
+├── uploads/                   # admin 上傳的原始 Excel 留存，不納入版控
+├── processed/                 # 清洗後 Excel 與暫存 JSON，不納入版控
+├── data_backups/              # data.json 舊版備份，不納入版控
 ├── templates/
 │   ├── index.html
 │   └── 403.html               # 無權限存取頁面
@@ -66,7 +75,7 @@ building/
         └── components.js
 ```
 
-> 注意：目前 repository 中不一定包含 `data.json`、`access_log.txt`、`app.log`，這些通常是部署或執行時產生 / 放置的檔案。
+> 注意：`data.json`、`access_log.txt`、`app.log`、`uploads/`、`processed/`、`data_backups/` 是執行或部署時產生 / 放置的資料，不建議納入版控。
 
 ---
 
@@ -82,10 +91,12 @@ Flask 後端主程式，負責：
 - 提供首頁 `/`
 - 提供目前使用者 API `/api/me`
 - 提供資料 API `/api/data`
+- 提供 admin 上傳 API `/api/admin/upload-data`
 - 讀取根目錄下的 `data.json`
 - 讀取根目錄下的 `permissions.json`
 - 透過 `REMOTE_USER` 取得 Windows AD 使用者
 - 依角色檢查使用者是否允許存取頁面 / API
+- 上傳 Excel 後先備份上一版 `data.json`，再更新目前資料
 - 記錄使用者存取資訊到 `access_log.txt`
 - 支援 IIS 透過 `WSGI_HANDLER=app.app` 呼叫
 
@@ -96,6 +107,57 @@ Flask 後端主程式，負責：
 | `/` | GET | admin / user / viewer | 回傳 `templates/index.html` |
 | `/api/me` | GET | admin / user / viewer | 回傳目前使用者帳號與角色 |
 | `/api/data` | GET | admin / user / viewer | 讀取 `data.json` 並回傳 JSON |
+| `/api/admin/upload-data` | POST | admin | 上傳 Excel，清洗、備份舊版並更新 `data.json` |
+
+---
+
+### `data_processor.py`
+
+Excel 清洗與 JSON 轉換模組，由 `/api/admin/upload-data` 呼叫。
+
+處理流程：
+
+```text
+上傳原始 Excel
+    ↓
+以 header=1 讀取 Excel
+    ↓
+移除欄位名稱與內容中的換行 / 空白
+    ↓
+依欄位設定擷取樓層資料與棟別資料
+    ↓
+補齊缺失的廠務子系統欄位為 0
+    ↓
+清洗樓層名稱，過濾有效樓層
+    ↓
+輸出標準格式 Excel 到 processed/
+    ↓
+將標準格式 Excel 轉成巢狀 JSON
+    ↓
+輸出新的 data.json
+```
+
+目前支援的廠務設施子系統欄位：
+
+```text
+純水、廢水、給排水、空調、抽氣、氣體、電力、弱電、消防、監控、監控/弱電/消防
+```
+
+若有子系統資料，系統會將 `廠務設施面積(M2)` 轉成：
+
+```json
+{
+  "value": 1600,
+  "details": {
+    "純水": 300,
+    "廢水": 200,
+    "空調": 500,
+    "電力": 600
+  }
+}
+```
+
+若母欄位與子系統加總不一致，系統仍會保留資料，並在上傳結果中回傳 warning。
 
 ---
 
@@ -105,7 +167,7 @@ Flask 後端主程式，負責：
 
 | 角色 | 說明 |
 |---|---|
-| `admins` | 系統管理者，預留未來管理功能使用 |
+| `admins` | 系統管理者，可看到網頁上傳資料區塊，並可呼叫 `/api/admin/upload-data` |
 | `users` | 一般使用者，可使用主要平台功能 |
 | `viewers` | 檢視者，可進入平台查看資料 |
 
@@ -149,8 +211,6 @@ DOMAIN\username
 
 ## 權限控管流程
 
-目前第一版權限控管流程如下：
-
 ```text
 使用者進入系統
     ↓
@@ -176,6 +236,40 @@ Local-Dev
 
 ---
 
+## Admin 資料更新流程
+
+admin 登入後，頁面上方會顯示「資料更新」區塊，可上傳 `.xlsx` 檔案。
+
+系統更新流程：
+
+```text
+admin 選擇 Excel
+    ↓
+POST /api/admin/upload-data
+    ↓
+儲存原始上傳檔到 uploads/
+    ↓
+若目前已有 data.json，先複製到 data_backups/
+    ↓
+使用 data_processor.py 清洗 Excel
+    ↓
+輸出清洗後 Excel 到 processed/
+    ↓
+產生新的暫存 JSON
+    ↓
+轉換成功後覆蓋根目錄 data.json
+    ↓
+前端重新載入 /api/data 更新畫面
+```
+
+備份檔命名格式：
+
+```text
+data_YYYYMMDD_HHMMSS_USERNAME.json
+```
+
+---
+
 ## API 回傳範例
 
 ### `/api/me`
@@ -184,6 +278,20 @@ Local-Dev
 {
   "username": "ASE\\mattchen",
   "role": "admin"
+}
+```
+
+### `/api/admin/upload-data` 成功
+
+```json
+{
+  "success": true,
+  "message": "資料更新成功，上一版資料已完成留存。",
+  "uploaded_file": "樓層面積資訊-Update20260417_(Security C).xlsx",
+  "backup_file": "data_20260512_153000_ASE_mattchen.json",
+  "rows": 120,
+  "buildings": 42,
+  "warnings": []
 }
 ```
 
@@ -197,137 +305,6 @@ Local-Dev
   "role": null
 }
 ```
-
----
-
-### `templates/index.html`
-
-前端入口頁，負責：
-
-- 載入 Tailwind CSS CDN
-- 載入 Lucide Icons CDN
-- 套用 light / dark theme 初始狀態
-- 載入 `static/css/style.css`
-- 載入 `static/js/main.js`
-- 顯示系統載入中的 loading 畫面
-
----
-
-### `templates/403.html`
-
-無權限頁面。當使用者不在 `permissions.json` 的任何角色中，或角色不符合 route 要求時，會顯示此頁面。
-
-頁面會顯示：
-
-- 目前帳號
-- 目前角色
-- 此路由允許的角色
-- HTTP 403 Forbidden
-
----
-
-### `static/js/main.js`
-
-前端主控制器，負責：
-
-- 管理畫面狀態 `state`
-- 呼叫 `/api/data` 載入資料
-- 呼叫 `processRawData()` 處理原始資料
-- 呼叫 `renderHeader()`、`renderMatrix()`、`renderPanel()` 組合畫面
-- 處理深色模式切換
-- 處理廠棟篩選
-- 處理點選樓層 / 廠棟後的側邊面板
-- 保留矩陣捲動位置，避免重新 render 後跳回起點
-
----
-
-### `static/js/data.js`
-
-資料轉換模組，負責將 `data.json` 的原始資料整理成前端容易使用的格式。
-
-主要輸出：
-
-- `processedData`：逐樓層攤平後的資料
-- `buildingMeta`：各廠棟基本資訊
-- `sortedFloorLabels`：排序後的樓層清單
-
-支援欄位包含：
-
-- 棟別
-- 樓層
-- 基地面積
-- 容積率
-- 建蔽率
-- 開挖深度
-- 耐震係數
-- 樓地板面積
-- 樓層高度
-- 無塵室面積
-- 生產週邊
-- 廠務設施面積
-- 公設 / 其他
-- 進駐製程
-- 狀態：`已成廠` / `未成廠`
-
----
-
-### `static/js/utils.js`
-
-共用工具函式，包含：
-
-- `getFloorWeight()`：樓層排序權重，例如 B1、1F、RF、PH
-- `formatArea()`：面積格式化，支援 `m²` 與 `坪`
-- `formatPct()`：百分比格式化
-- `getCellStyle()`：格子基礎樣式
-
----
-
-### `static/js/components.js`
-
-前端畫面元件模組，負責產生主要 HTML UI：
-
-- Header 區塊
-- 廠棟篩選按鈕
-- 總樓地板 / 總無塵室統計
-- 顯示模式切換
-- 面積堆疊條
-- 樓層矩陣
-- 側邊資訊面板
-- 廠務設施細項 tooltip
-- 已成廠 / 未成廠呈現邏輯
-
----
-
-### `static/css/style.css`
-
-補充樣式，包含：
-
-- 隱藏捲軸但保留滾動功能
-- 側邊面板滑入動畫
-- grid cell 點擊動畫
-- 手機版橫向捲動優化
-
----
-
-### `web.config`
-
-IIS 部署設定檔，主要用於：
-
-- 設定 FastCGI handler
-- 指定 Python 執行檔與 `wfastcgi.py`
-- 指定 `WSGI_HANDLER=app.app`
-- 指定 `PYTHONPATH`
-- 指定 `WSGI_LOG`
-
-目前設定路徑範例：
-
-```xml
-D:\FAC_Web\BuildingPlatform\PortablePython3.11.5\python.exe
-D:\FAC_Web\BuildingPlatform\PortablePython3.11.5\wfastcgi.py
-D:\FAC_Web\BuildingPlatform
-```
-
-部署到其他環境時，需要依實際路徑調整。
 
 ---
 
@@ -363,26 +340,6 @@ D:\FAC_Web\BuildingPlatform
 ]
 ```
 
-### 廠務設施細項格式
-
-`廠務設施面積(M2)` 可為數字，也可擴充為物件格式，提供細項 tooltip 使用：
-
-```json
-{
-  "樓層": "2F",
-  "樓地板面積(M2)": 5000,
-  "廠務設施面積(M2)": {
-    "value": 1600,
-    "details": {
-      "純水": 300,
-      "廢水": 200,
-      "空調": 500,
-      "電力": 600
-    }
-  }
-}
-```
-
 ---
 
 ## 本機執行方式
@@ -409,26 +366,19 @@ source .venv/bin/activate
 
 ### 2. 安裝套件
 
-目前專案主要依賴 Flask：
-
 ```bash
-pip install flask
-```
-
-若部署 IIS FastCGI，則需要額外安裝：
-
-```bash
-pip install wfastcgi
+pip install -r requirements.txt
 ```
 
 ### 3. 準備資料檔與權限檔
 
-請在專案根目錄放置：
+請在專案根目錄放置或確認：
 
 ```text
-data.json
 permissions.json
 ```
+
+`data.json` 可以手動放置，也可以由 admin 在網頁上傳 Excel 後自動產生。
 
 若沒有 `data.json`，`/api/data` 會回傳空陣列 `[]`。
 
@@ -464,22 +414,28 @@ http://127.0.0.1:5020
 4. 確認 `PYTHONPATH` 指向專案根目錄。
 5. 確認 IIS App Pool 身分有權限讀取專案目錄。
 6. 確認 IIS App Pool 身分有權限寫入：
+   - `data.json`
    - `access_log.txt`
    - `app.log`
-7. 確認 `data.json` 已放置於專案根目錄。
-8. 確認 `permissions.json` 已設定正式 AD 帳號。
-9. 若使用 Windows 整合驗證，`app.py` 會從 `REMOTE_USER` 取得使用者帳號。
+   - `uploads/`
+   - `processed/`
+   - `data_backups/`
+7. 確認 `permissions.json` 已設定正式 AD 帳號。
+8. 若使用 Windows 整合驗證，`app.py` 會從 `REMOTE_USER` 取得使用者帳號。
+9. 若 admin 要上傳大檔案，需確認 IIS request limit 與 Flask `MAX_CONTENT_LENGTH` 設定，目前 Flask 限制為 50MB。
 
 ---
 
 ## 使用者存取紀錄
 
-每次使用者進入首頁 `/` 或被拒絕存取時，系統會記錄：
+每次使用者進入首頁 `/`、上傳資料或被拒絕存取時，系統會記錄：
 
 - 使用者帳號
 - IP
-- 操作，例如 `View Dashboard`、`Access Denied`
+- 操作，例如 `View Dashboard`、`Upload Data`、`Upload Data Failed`、`Access Denied`
 - 角色
+- 上傳檔案名稱
+- 備份檔案
 - 被拒絕時的路徑與需要角色
 - 時間戳記
 
@@ -489,12 +445,6 @@ http://127.0.0.1:5020
 access_log.txt
 ```
 
-本機執行時若沒有 IIS 的 `REMOTE_USER`，會顯示為：
-
-```text
-Local-Dev
-```
-
 ---
 
 ## 開發備註
@@ -502,21 +452,19 @@ Local-Dev
 - 前端目前採用 ES Modules，因此需透過 HTTP server 執行，不建議直接用檔案方式開啟 HTML。
 - Tailwind CSS 與 Lucide Icons 使用 CDN，部署環境需能連線至 CDN，否則需改為本地化資源。
 - `components.js` 內含大量 UI HTML template，若後續功能持續擴充，建議逐步拆分為更細的元件模組。
-- `data.json` 若資料量變大，可考慮改為資料庫或後端分頁 API。
+- `data.json` 目前以檔案方式管理，若資料量變大或需要多人同時更新，可考慮改為資料庫。
 - 若要接正式 AD 群組，可保留 `require_roles()`，只替換 `get_user_role()` 的角色查詢來源。
-- 若要正式版控相依套件，建議新增 `requirements.txt`。
 
 ---
 
 ## 後續可改善項目
 
-- 新增 `requirements.txt`
-- 新增 `.gitignore`
 - 新增 `data.sample.json`
+- 增加資料備份還原功能
+- 增加上傳紀錄查詢頁
 - 將 CDN 資源改成本地靜態檔
 - 將 `components.js` 拆分為 Header、Matrix、Panel 等模組
 - 將 `permissions.json` 改接 AD Group 或資料庫
-- 在前端呼叫 `/api/me` 顯示目前使用者與角色
-- 依角色隱藏 / 顯示前端功能按鈕
+- 依角色隱藏 / 顯示更多前端功能按鈕
 - 補上 API 錯誤畫面與資料格式驗證
 - 增加部署文件，例如 IIS 設定截圖或 SOP
