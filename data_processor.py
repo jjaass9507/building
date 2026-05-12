@@ -3,8 +3,6 @@ import math
 import os
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
-
 # --- 欄位對應設定 ---
 
 floor_columns_setting = {
@@ -59,11 +57,26 @@ class DataProcessError(Exception):
     """資料轉換失敗。"""
 
 
-def clean_dict(row: Dict[str, Any]) -> Dict[str, Any]:
+def get_pandas():
+    """
+    延遲載入 pandas，避免 pandas / numpy 環境異常時導致整個 Flask app 無法啟動。
+    只有 admin 執行 Excel 上傳轉換時才會真正 import pandas。
+    """
+    try:
+        import pandas as pd
+        return pd
+    except Exception as exc:
+        raise DataProcessError(
+            "Excel 資料處理套件載入失敗，請確認 PortablePython 內 pandas、numpy、openpyxl 已正確安裝。"
+            f" 原始錯誤：{exc}"
+        ) from exc
+
+
+def clean_dict(row: Dict[str, Any], pd_module) -> Dict[str, Any]:
     """移除 NaN 與空字串。"""
     return {
         k: v for k, v in row.items()
-        if not pd.isna(v) and v != ""
+        if not pd_module.isna(v) and v != ""
     }
 
 
@@ -76,6 +89,7 @@ def to_float(value: Any) -> float:
 
 def excel_sheets_to_nested_data(file_path: str, warnings: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """將標準格式 Excel 轉成前端使用的巢狀 JSON 資料結構。"""
+    pd = get_pandas()
     warnings = warnings if warnings is not None else []
 
     try:
@@ -90,7 +104,7 @@ def excel_sheets_to_nested_data(file_path: str, warnings: Optional[List[str]] = 
     sub_keys = list(facility_sub_columns.values())
 
     for row in df_detail.to_dict(orient='records'):
-        cleaned_floor = clean_dict(row)
+        cleaned_floor = clean_dict(row, pd)
 
         sub_total = 0.0
         sub_items_dict: Dict[str, float] = {}
@@ -139,7 +153,7 @@ def excel_sheets_to_nested_data(file_path: str, warnings: Optional[List[str]] = 
 
     final_data: List[Dict[str, Any]] = []
     for row in df_master.to_dict(orient='records'):
-        cleaned_master = clean_dict(row)
+        cleaned_master = clean_dict(row, pd)
         building_id = row.get(JOIN_KEY)
         cleaned_master['樓層'] = floor_map.get(building_id, [])
         final_data.append(cleaned_master)
@@ -161,6 +175,7 @@ def process_excel_file(input_path: str, cleaned_excel_path: str, json_output_pat
         json_output_path: str
     }
     """
+    pd = get_pandas()
     warnings: List[str] = []
 
     try:
