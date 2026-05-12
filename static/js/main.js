@@ -10,8 +10,11 @@ const state = {
     selectedBuilding: null, 
     filterBuildings: [], 
     unit: 'ping',
-    includeUnfinished: false, // [補回]
-    isDarkMode: localStorage.getItem('theme') === 'dark' // [補回] 從記憶讀取
+    includeUnfinished: false,
+    isDarkMode: localStorage.getItem('theme') === 'dark',
+    currentUser: null,
+    uploadStatus: null,
+    isUploading: false
 };
 
 // 初始主題檢查
@@ -25,6 +28,65 @@ let appData = {
     processed: [],
     meta: {},
     sortedFloors: []
+};
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+const renderAdminUploadPanel = () => {
+    if (state.currentUser?.role !== 'admin') return '';
+
+    const status = state.uploadStatus;
+    const statusHtml = status ? `
+        <div class="mt-3 rounded-lg border ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'} px-4 py-3 text-sm">
+            <div class="font-bold">${escapeHtml(status.message)}</div>
+            ${status.backup_file ? `<div class="mt-1 text-xs opacity-80">上一版備份：${escapeHtml(status.backup_file)}</div>` : ''}
+            ${status.rows !== undefined ? `<div class="mt-1 text-xs opacity-80">樓層筆數：${escapeHtml(status.rows)}，棟別數：${escapeHtml(status.buildings)}</div>` : ''}
+            ${status.warnings?.length ? `
+                <details class="mt-2">
+                    <summary class="cursor-pointer font-bold">轉換警告 ${status.warnings.length} 筆</summary>
+                    <ul class="mt-2 list-disc pl-5 space-y-1">
+                        ${status.warnings.slice(0, 20).map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+                    </ul>
+                </details>` : ''}
+        </div>` : '';
+
+    return `
+        <section class="mx-2 md:mx-6 mt-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-4 transition-colors">
+            <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/40 px-2.5 py-1 text-xs font-black text-blue-700 dark:text-blue-300">ADMIN</span>
+                        <h2 class="text-lg font-black text-slate-800 dark:text-slate-100">資料更新</h2>
+                    </div>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                        上傳樓層面積資訊 Excel（.xlsx）後，系統會先備份上一版 data.json，再更新目前資料。
+                    </p>
+                </div>
+                <form class="flex flex-col sm:flex-row gap-2 sm:items-center" onsubmit="window.app.uploadDataFile(event)">
+                    <input id="admin-data-file" name="file" type="file" accept=".xlsx" class="block w-full sm:w-80 text-sm text-slate-500 dark:text-slate-300 file:mr-4 file:rounded-full file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-sm file:font-bold file:text-white hover:file:bg-slate-700 dark:file:bg-blue-600 dark:hover:file:bg-blue-500" ${state.isUploading ? 'disabled' : ''}>
+                    <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" ${state.isUploading ? 'disabled' : ''}>
+                        ${state.isUploading ? '更新中...' : '上傳並更新'}
+                    </button>
+                </form>
+            </div>
+            ${statusHtml}
+        </section>`;
+};
+
+const loadData = async () => {
+    const res = await fetch('/api/data', { cache: 'no-store' });
+    if (!res.ok) throw new Error("API Error");
+    const rawData = await res.json();
+    const result = processRawData(rawData);
+    appData.source = rawData;
+    appData.processed = result.processedData;
+    appData.meta = result.buildingMeta;
+    appData.sortedFloors = result.sortedFloorLabels;
 };
 
 // --- 更新畫面 ---
@@ -52,24 +114,21 @@ const render = () => {
         cleanRoom: formatArea(totalClean, state.unit)
     };
 
-    // 1. 取得所有廠棟名稱
     const allNames = Object.keys(appData.meta);
     const activeBuildings = state.filterBuildings.length > 0 ? state.filterBuildings : allNames;
 
-    // 2. 動態篩選樓層
     const presentFloors = new Set();
     activeBuildings.forEach(bldg => {
         appData.processed.filter(d => d.building === bldg).forEach(d => presentFloors.add(d.floor));
     });
     const activeFloors = appData.sortedFloors.filter(f => presentFloors.has(f));
 
-    // 3. 建立 Map 加速查找
     const dataMap = {};
     appData.processed.forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
 
-    // 4. 組合 HTML
     app.innerHTML = `
         ${renderHeader(state, allNames, totals, appData.processed)}
+        ${renderAdminUploadPanel()}
         <main class="flex-1 p-2 md:p-6 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             ${renderMatrix(state, activeBuildings, activeFloors, appData.processed, dataMap, appData.meta)} 
         </main>
@@ -78,7 +137,6 @@ const render = () => {
 
     lucide.createIcons();
 
-    // 還原捲動
     const newScrollContainer = document.getElementById('matrix-scroll-container');
     if (newScrollContainer) {
         newScrollContainer.scrollLeft = savedScrollLeft;
@@ -90,7 +148,6 @@ const render = () => {
 window.app = {
     updateState: (k, v) => { 
         state[k] = v; 
-        // [關鍵修正] 補回深色模式的主題切換邏輯
         if (k === 'isDarkMode') {
             if (v) {
                 document.documentElement.classList.add('dark');
@@ -128,21 +185,71 @@ window.app = {
             }
         }
         render();
+    },
+    uploadDataFile: async (event) => {
+        event.preventDefault();
+        const fileInput = document.getElementById('admin-data-file');
+        const file = fileInput?.files?.[0];
+
+        if (!file) {
+            state.uploadStatus = { success: false, message: '請先選擇要上傳的 .xlsx 檔案。' };
+            render();
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        state.isUploading = true;
+        state.uploadStatus = null;
+        render();
+
+        try {
+            const res = await fetch('/api/admin/upload-data', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await res.json();
+
+            if (!res.ok || !result.success) {
+                throw new Error(result.message || '資料更新失敗');
+            }
+
+            state.uploadStatus = {
+                success: true,
+                message: result.message || '資料更新成功。',
+                backup_file: result.backup_file,
+                rows: result.rows,
+                buildings: result.buildings,
+                warnings: result.warnings || []
+            };
+
+            await loadData();
+            state.selectedZone = null;
+            state.selectedBuilding = null;
+            fileInput.value = '';
+        } catch (e) {
+            state.uploadStatus = {
+                success: false,
+                message: e.message || '資料更新失敗。'
+            };
+        } finally {
+            state.isUploading = false;
+            render();
+        }
     }
 };
 
 // --- 初始化 ---
 const init = async () => {
     try {
-        const res = await fetch('/api/data');
-        if (!res.ok) throw new Error("API Error");
-        const rawData = await res.json();
-        
-        const result = processRawData(rawData);
-        appData.processed = result.processedData;
-        appData.meta = result.buildingMeta;
-        appData.sortedFloors = result.sortedFloorLabels;
+        const meRes = await fetch('/api/me', { cache: 'no-store' });
+        if (meRes.ok) {
+            state.currentUser = await meRes.json();
+        }
 
+        await loadData();
+        
         if (window.innerWidth < 768) {
             const allBuildings = Object.keys(appData.meta);
             const target = "K18"; 
@@ -154,7 +261,7 @@ const init = async () => {
         render();
     } catch (e) {
         console.error(e);
-        document.getElementById('app').innerHTML = `<div class="p-10 text-center text-red-500">載入失敗: ${e.message}</div>`;
+        document.getElementById('app').innerHTML = `<div class="p-10 text-center text-red-500">載入失敗: ${escapeHtml(e.message)}</div>`;
     }
 };
 
