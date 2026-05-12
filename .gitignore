@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# runtime data
+data.json
+access_log.txt
+app.log
+uploads/
+processed/
+data_backups/
+
+# office temp files
+~$*.xlsx
