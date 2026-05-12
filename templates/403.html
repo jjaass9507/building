@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>無權限存取｜建物管理平台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center px-4">
+    <main class="bg-white shadow-xl rounded-2xl p-8 md:p-10 max-w-lg w-full border border-slate-200 text-center">
+        <div class="mx-auto mb-5 w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
+            <span class="text-red-600 text-3xl font-black">!</span>
+        </div>
+
+        <h1 class="text-2xl md:text-3xl font-black text-slate-800 mb-3">無權限存取</h1>
+        <p class="text-slate-600 leading-relaxed mb-6">
+            你的 Windows AD 帳號目前尚未被授權使用此系統，請聯繫系統管理者加入對應角色。
+        </p>
+
+        <div class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-left text-sm space-y-2">
+            <div class="flex justify-between gap-4">
+                <span class="text-slate-400 font-bold shrink-0">目前帳號</span>
+                <span class="text-slate-700 font-mono break-all text-right">{{ username }}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+                <span class="text-slate-400 font-bold shrink-0">目前角色</span>
+                <span class="text-red-600 font-bold">{{ role or '未授權' }}</span>
+            </div>
+            <div class="flex justify-between gap-4">
+                <span class="text-slate-400 font-bold shrink-0">允許角色</span>
+                <span class="text-slate-700 font-mono text-right">{{ required_roles | join(', ') }}</span>
+            </div>
+        </div>
+
+        <p class="mt-6 text-xs text-slate-400">
+            HTTP 403 Forbidden
+        </p>
+    </main>
+</body>
+</html>
