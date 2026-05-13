@@ -17,6 +17,8 @@ const state = {
     isUploading: false
 };
 
+const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
+
 // 初始主題檢查
 if (state.isDarkMode) {
     document.documentElement.classList.add('dark');
@@ -147,9 +149,14 @@ const render = () => {
 
     const presentFloors = new Set();
     activeBuildings.forEach(bldg => {
-        appData.processed.filter(d => d.building === bldg).forEach(d => presentFloors.add(d.floor));
+        appData.processed
+            .filter(d => d.building === bldg && !HIDDEN_MATRIX_FLOORS.has(String(d.floor || '').toUpperCase().trim()))
+            .forEach(d => presentFloors.add(d.floor));
     });
-    const activeFloors = appData.sortedFloors.filter(f => presentFloors.has(f));
+    const activeFloors = appData.sortedFloors.filter(f => (
+        presentFloors.has(f)
+        && !HIDDEN_MATRIX_FLOORS.has(String(f || '').toUpperCase().trim())
+    ));
 
     const matrixData = state.displayMode === 'load'
         ? appData.processed.map(item => ({
