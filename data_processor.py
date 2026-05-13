@@ -51,6 +51,8 @@ SHEET_NAME_MASTER = '廠棟標準格式'
 SHEET_NAME_DETAIL = '樓層標準格式'
 FACILITY_MAIN_KEY = '廠務設施面積(M2)'
 JOIN_KEY = '棟別'
+UNFINISHED_STATUS = '未成廠'
+UNKNOWN_FLOOR_LABEL = 'ALL'
 
 
 class DataProcessError(Exception):
@@ -200,13 +202,30 @@ def process_excel_file(input_path: str, cleaned_excel_path: str, json_output_pat
     df_floor = df[list(floor_columns_setting.keys())].rename(columns=floor_columns_setting)
     target_building_col = floor_columns_setting['棟別']
     target_floor_col = floor_columns_setting['樓層']
+    target_status_col = floor_columns_setting['狀態']
 
     df_floor[target_building_col] = df_floor[target_building_col].ffill()
-    df_floor = df_floor.dropna(subset=[target_floor_col])
-    df_floor = df_floor[df_floor[target_floor_col].astype(str).str.contains('F|筏基', case=False, na=False, regex=True)]
-    df_floor[target_floor_col] = df_floor[target_floor_col].astype(str).str.replace(r'\(.*?\)', '', regex=True)
+    df_floor[target_status_col] = df_floor[target_status_col].fillna('').astype(str).str.strip()
+    df_floor[target_floor_col] = df_floor[target_floor_col].fillna('').astype(str).str.strip()
+
+    # 新建未成廠可能尚未確定樓層；此時用 ALL 作為前端可顯示、可彙整的虛擬樓層。
+    unfinished_without_floor = (
+        df_floor[target_status_col].eq(UNFINISHED_STATUS)
+        & df_floor[target_floor_col].eq('')
+    )
+    df_floor.loc[unfinished_without_floor, target_floor_col] = UNKNOWN_FLOOR_LABEL
+
+    df_floor[target_floor_col] = df_floor[target_floor_col].str.replace(r'\(.*?\)', '', regex=True)
     df_floor[target_floor_col] = df_floor[target_floor_col].str.replace(r'（.*?）', '', regex=True)
     df_floor[target_floor_col] = df_floor[target_floor_col].str.strip()
+
+    valid_floor = df_floor[target_floor_col].astype(str).str.contains(
+        rf'F|筏基|^{UNKNOWN_FLOOR_LABEL}$',
+        case=False,
+        na=False,
+        regex=True
+    )
+    df_floor = df_floor[valid_floor]
 
     missing_bldg = [col for col in building_columns_setting.keys() if col not in df.columns]
     if missing_bldg:
