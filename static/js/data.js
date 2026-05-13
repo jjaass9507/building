@@ -68,6 +68,7 @@ export const processRawData = (data) => {
                 prodPct: fTotalArea > 0 ? fProdArea / fTotalArea : 0,
                 facPct: fTotalArea > 0 ? fFacValue / fTotalArea : 0,
                 pubPct: fTotalArea > 0 ? fPubArea / fTotalArea : 0,
+                processLabel: safeProcess,
                 usageLabel: safeProcess,
                 status: floorStatus
             });
