@@ -37,6 +37,34 @@ const escapeHtml = (value) => String(value ?? '')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 
+const formatFloorLoadValue = (value) => {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num) || num <= 0) return '-';
+    return num.toLocaleString(undefined, { maximumFractionDigits: 0 });
+};
+
+const formatFloorLoadCell = (value) => {
+    const loadText = formatFloorLoadValue(value);
+    return `
+        <span class="font-mono font-bold text-lg text-slate-700 dark:text-slate-200 leading-tight">${escapeHtml(loadText)}</span>
+        <span class="block text-[10px] text-slate-400 font-bold leading-tight mt-0.5">kgf/m²</span>
+    `;
+};
+
+const createLoadModeButton = () => `
+    <button onclick="window.app.updateState('displayMode', 'load')" class="flex items-center gap-1 px-2 py-1 rounded text-base transition-all ${state.displayMode === 'load' ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}">
+        <i data-lucide="scale" class="w-3 h-3"></i> 荷重
+    </button>`;
+
+const injectLoadModeButton = (headerHtml) => {
+    if (headerHtml.includes("displayMode', 'load'")) return headerHtml;
+
+    return headerHtml.replace(
+        /(<button onclick="window\.app\.updateState\('displayMode', 'height'\)"[\s\S]*?<\/button>)/,
+        `$1${createLoadModeButton()}`
+    );
+};
+
 const renderAdminUploadPanel = () => {
     if (state.currentUser?.role !== 'admin') return '';
 
@@ -123,14 +151,23 @@ const render = () => {
     });
     const activeFloors = appData.sortedFloors.filter(f => presentFloors.has(f));
 
+    const matrixData = state.displayMode === 'load'
+        ? appData.processed.map(item => ({
+            ...item,
+            usageLabel: formatFloorLoadCell(item.floorLoad)
+        }))
+        : appData.processed;
+
     const dataMap = {};
-    appData.processed.forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
+    matrixData.forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
+
+    const headerHtml = injectLoadModeButton(renderHeader(state, allNames, totals, appData.processed));
 
     app.innerHTML = `
-        ${renderHeader(state, allNames, totals, appData.processed)}
+        ${headerHtml}
         ${renderAdminUploadPanel()}
         <main class="flex-1 p-2 md:p-6 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
-            ${renderMatrix(state, activeBuildings, activeFloors, appData.processed, dataMap, appData.meta)} 
+            ${renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)} 
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
     `;
