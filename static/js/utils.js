@@ -1,6 +1,11 @@
 // 樓層排序權重計算
 export const getFloorWeight = (floorStr) => {
-    const str = floorStr.toUpperCase();
+    const str = String(floorStr || '').toUpperCase().trim();
+
+    // 未成廠且樓層未定時使用的虛擬樓層，固定顯示在最上方
+    if (str === 'ALL') {
+        return 9999;
+    }
     
     // 地下室 (B1, B2...) -> 權重為負數
     if (str.startsWith('B')) {
