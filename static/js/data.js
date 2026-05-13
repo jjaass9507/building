@@ -1,5 +1,10 @@
 import { getFloorWeight } from './utils.js';
 
+const toNumber = (value) => {
+    const num = Number(value || 0);
+    return Number.isFinite(num) ? num : 0;
+};
+
 export const processRawData = (data) => {
     const tempFloors = new Set();
     const processedData = []; 
@@ -19,11 +24,11 @@ export const processRawData = (data) => {
         }
 
         buildingMeta[bName] = {
-            baseArea: b["基地面積(M2)"] || 0,
-            capacityRate: b["容積率"] || 0,
-            coverageRate: b["建蔽率"] || 0,
-            digDepth: b["開挖深度(M)"] || 0,
-            seismic: b["耐震係數(gal)"] || 0,
+            baseArea: toNumber(b["基地面積(M2)"]),
+            capacityRate: toNumber(b["容積率"]),
+            coverageRate: toNumber(b["建蔽率"]),
+            digDepth: toNumber(b["開挖深度(M)"]),
+            seismic: toNumber(b["耐震係數(gal)"]),
             floorsCount: floors.length 
         };
 
@@ -36,17 +41,16 @@ export const processRawData = (data) => {
             const rawProcess = f["進駐製程"];
             const safeProcess = (rawProcess && String(rawProcess).trim().length > 0) ? rawProcess : '非製程';
 
-            // [新增] 狀態判斷邏輯
-            // 如果 "狀態" 欄位是 "未成廠"，就標記為 "未成廠"
-            // 否則 (包含空值、undefined、或其他的)，預設為 "已成廠"
             const rawStatus = f["狀態"];
-            const floorStatus = (rawStatus && rawStatus.trim() === '未成廠') ? '未成廠' : '已成廠';
+            const floorStatus = (rawStatus && String(rawStatus).trim() === '未成廠') ? '未成廠' : '已成廠';
 
-            const fTotalArea = f["樓地板面積(M2)"] || 0;
-            const fCleanArea = f["無塵室面積(M2)"] || 0;
-            const fProdArea = f["生產週邊(M2)"] || 0;
+            const fTotalArea = toNumber(f["樓地板面積(M2)"]);
+            const fCleanArea = toNumber(f["無塵室面積(M2)"]);
+            const fProdArea = toNumber(f["生產週邊(M2)"]);
             const fFacArea = f["廠務設施面積(M2)"] || 0;
-            const fPubArea = f["公設(含其他)(公式)(M2)"] || 0;
+            const fFacValue = (typeof fFacArea === 'object' && fFacArea !== null) ? toNumber(fFacArea.value) : toNumber(fFacArea);
+            const fPubArea = toNumber(f["公設(含其他)(公式)(M2)"]);
+            const fFloorLoad = toNumber(f["樓層載重kgf/m2"]);
 
             processedData.push({
                 id: `${bName}-${fName}`,
@@ -54,17 +58,18 @@ export const processRawData = (data) => {
                 floor: fName,
                 floorWeight: getFloorWeight(fName),
                 area: fTotalArea,
-                height: f["樓層高度(cm)"] || 0,
+                height: toNumber(f["樓層高度(cm)"]),
+                floorLoad: fFloorLoad,
                 cleanRoomArea: fCleanArea,
                 prodArea: fProdArea,
                 facArea: fFacArea,
                 pubArea: fPubArea,
                 cleanRoomPct: fTotalArea > 0 ? fCleanArea / fTotalArea : 0,
                 prodPct: fTotalArea > 0 ? fProdArea / fTotalArea : 0,
-                facPct: fTotalArea > 0 ? fFacArea / fTotalArea : 0,
+                facPct: fTotalArea > 0 ? fFacValue / fTotalArea : 0,
                 pubPct: fTotalArea > 0 ? fPubArea / fTotalArea : 0,
                 usageLabel: safeProcess,
-                status: floorStatus // [新增] 將狀態存入
+                status: floorStatus
             });
         });
     });
