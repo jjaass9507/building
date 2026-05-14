@@ -103,28 +103,28 @@ function renderChartSection(metric, trend) {
   const latestAnnual = displayArea(data.annual[data.annual.length - 1] || 0);
 
   return `
-    <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
-      <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-3 mb-4">
+    <section class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-3">
+      <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-2 mb-2">
         <div>
           <div class="flex items-center gap-2">
-            <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl border ${metric.card}"><i data-lucide="bar-chart-3" class="w-4 h-4"></i></span>
+            <span class="inline-flex h-7 w-7 items-center justify-center rounded-lg border ${metric.card}"><i data-lucide="bar-chart-3" class="w-4 h-4"></i></span>
             <h3 class="text-base font-black text-slate-700 dark:text-slate-100">${metric.label}</h3>
           </div>
-          <p class="mt-1 text-xs font-bold text-slate-400">同一張圖表內呈現「累積總面積折線」與「年增面積柱狀」。柱狀圖刻度已壓低，與趨勢線保留較明顯間距。</p>
+          <p class="mt-1 text-xs font-bold text-slate-400">同一張圖表內呈現「累積總面積折線」與「年增面積柱狀」，方便上下對照比較。</p>
         </div>
         <div class="grid grid-cols-2 gap-2 min-w-[280px]">
-          <div class="rounded-xl border p-3 ${metric.card}">
+          <div class="rounded-lg border p-2 ${metric.card}">
             <div class="text-xs font-bold">累積總面積</div>
-            <div class="mt-1 text-xl font-black text-slate-800 dark:text-white">${latest.val}<span class="ml-1 text-xs text-slate-400">${latest.unit}</span></div>
+            <div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latest.val}<span class="ml-1 text-xs text-slate-400">${latest.unit}</span></div>
           </div>
-          <div class="rounded-xl border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50 dark:bg-indigo-950/30 p-3">
+          <div class="rounded-lg border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50 dark:bg-indigo-950/30 p-2">
             <div class="text-xs font-bold text-indigo-600 dark:text-indigo-300">最後年度新增</div>
-            <div class="mt-1 text-xl font-black text-slate-800 dark:text-white">${latestAnnual.val}<span class="ml-1 text-xs text-slate-400">${latestAnnual.unit}</span></div>
-            <div class="mt-1 text-[11px] font-bold text-slate-400">年增率：${formatRate(data.rates[data.rates.length - 1])}</div>
+            <div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latestAnnual.val}<span class="ml-1 text-xs text-slate-400">${latestAnnual.unit}</span></div>
+            <div class="text-[11px] font-bold text-slate-400">年增率：${formatRate(data.rates[data.rates.length - 1])}</div>
           </div>
         </div>
       </div>
-      <div class="h-[390px]"><canvas id="trend-chart-${metric.key}"></canvas></div>
+      <div class="h-[340px]"><canvas id="trend-chart-${metric.key}"></canvas></div>
     </section>`;
 }
 
@@ -191,7 +191,7 @@ async function openTrendOverlay() {
             <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span>
             <h2 class="text-xl font-black text-slate-800 dark:text-slate-100">面積成長趨勢</h2>
           </div>
-          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">上方集中呈現圖表，下方集中呈現明細表；現況只作為累積基準，不列入年增面積。</p>
+          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">兩個圖表已壓縮間距，方便上下比較；現況只作為累積基準，不列入年增面積。</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           ${Object.values(METRICS).map(renderMetricButton).join('')}
@@ -199,14 +199,14 @@ async function openTrendOverlay() {
         </div>
       </div>
 
-      <div class="px-6 pt-5">
-        <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4 inline-block">
+      <div class="px-6 pt-4">
+        <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block">
           <div class="text-sm font-bold text-slate-500 dark:text-slate-300">無塵室 + 生產週邊合計</div>
           <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${total.val}<span class="ml-1 text-sm text-slate-400">${total.unit}</span></div>
         </div>
       </div>
 
-      <div class="px-6 py-5 space-y-5">
+      <div class="px-6 py-4 space-y-3">
         ${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個面積指標</div>'}
         ${renderTables(trend)}
       </div>
@@ -247,7 +247,7 @@ function drawCharts(trend) {
     const maxAnnual = Math.max(...annual, 0);
     const minCumulative = Math.min(...cumulative.filter((value) => value > 0), 0);
     const maxCumulative = Math.max(...cumulative, 0);
-    const cumulativePadding = Math.max((maxCumulative - minCumulative) * 0.18, maxCumulative * 0.08, 1);
+    const cumulativePadding = Math.max((maxCumulative - minCumulative) * 0.16, maxCumulative * 0.06, 1);
 
     const labelPlugin = {
       id: `trendLabels-${key}`,
@@ -280,7 +280,7 @@ function drawCharts(trend) {
             backgroundColor: metric.bg,
             borderWidth: 2,
             borderRadius: 8,
-            maxBarThickness: 52,
+            maxBarThickness: 50,
             yAxisID: 'annualAxis',
             order: 2
           },
@@ -304,7 +304,7 @@ function drawCharts(trend) {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
-        layout: { padding: { top: 34, right: 8 } },
+        layout: { padding: { top: 28, right: 8, bottom: 0 } },
         plugins: {
           legend: { labels: { color: textColor, font: { weight: 'bold' } } },
           tooltip: {
@@ -319,7 +319,7 @@ function drawCharts(trend) {
           x: { ticks: { color: textColor, font: { weight: 'bold' } }, grid: { display: false } },
           annualAxis: {
             beginAtZero: true,
-            suggestedMax: maxAnnual > 0 ? maxAnnual * 2.2 : 10,
+            suggestedMax: maxAnnual > 0 ? maxAnnual * 2.05 : 10,
             position: 'left',
             ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
             grid: { color: gridColor },
