@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-05-14T00:00:00+08:00",
+  "updated_by": "system",
+  "description": "電力與用水需求成長趨勢資料。此檔案獨立於樓層面積 data.json，後續供 Dev 權限人員在系統內維護。",
+  "display_settings": {
+    "default_unit_mode": "engineering",
+    "show_current_as_baseline_only": true,
+    "chart_mode": "cumulative_line_plus_annual_bar"
+  },
+  "metrics": [
+    {
+      "metric_key": "power_demand",
+      "metric_name": "電力需求",
+      "unit": "kW",
+      "annual_label": "年增電力需求",
+      "cumulative_label": "累積電力需求",
+      "description": "年度新增電力需求與累積電力需求。現況只作為累積基準，不列入年增。",
+      "series": [
+        {
+          "year_key": "current",
+          "year_label": "現況",
+          "value": 0,
+          "is_baseline": true,
+          "note": "目前既有電力需求基準值"
+        },
+        {
+          "year_key": "Y1",
+          "year_label": "Y1",
+          "value": 0,
+          "is_baseline": false,
+          "note": "預計新增電力需求"
+        },
+        {
+          "year_key": "Y2",
+          "year_label": "Y2",
+          "value": 0,
+          "is_baseline": false,
+          "note": "預計新增電力需求"
+        }
+      ]
+    },
+    {
+      "metric_key": "water_demand",
+      "metric_name": "用水需求",
+      "unit": "CMD",
+      "annual_label": "年增用水需求",
+      "cumulative_label": "累積用水需求",
+      "description": "年度新增用水需求與累積用水需求。現況只作為累積基準，不列入年增。",
+      "series": [
+        {
+          "year_key": "current",
+          "year_label": "現況",
+          "value": 0,
+          "is_baseline": true,
+          "note": "目前既有用水需求基準值"
+        },
+        {
+          "year_key": "Y1",
+          "year_label": "Y1",
+          "value": 0,
+          "is_baseline": false,
+          "note": "預計新增用水需求"
+        },
+        {
+          "year_key": "Y2",
+          "year_label": "Y2",
+          "value": 0,
+          "is_baseline": false,
+          "note": "預計新增用水需求"
+        }
+      ]
+    }
+  ]
+}
