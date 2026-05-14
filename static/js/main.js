@@ -16,12 +16,13 @@ const state = {
     uploadStatus: null,
     isUploading: false,
     isTrendOpen: false,
+    trendMetric: 'clean',
     isFilterCollapsed: true
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
 const isHiddenMatrixFloor = (floor) => HIDDEN_MATRIX_FLOORS.has(String(floor || '').toUpperCase().trim());
-let trendChart = null;
+let trendCharts = { cumulative: null, annual: null };
 
 if (state.isDarkMode) {
     document.documentElement.classList.add('dark');
@@ -131,6 +132,29 @@ const parseExpectedYear = (value) => {
 
 const formatYearLabel = (year) => year === 0 ? '現況' : `Y${year}`;
 
+const trendMetricOptions = {
+    clean: {
+        key: 'clean',
+        label: '無塵室面積',
+        shortLabel: '無塵室',
+        color: '#0EA5E9',
+        bgColor: 'rgba(14, 165, 233, 0.12)',
+        borderClass: 'border-sky-100 dark:border-sky-900/50',
+        bgClass: 'bg-sky-50 dark:bg-sky-950/30',
+        textClass: 'text-sky-600 dark:text-sky-300'
+    },
+    prod: {
+        key: 'prod',
+        label: '生產週邊面積',
+        shortLabel: '生產週邊',
+        color: '#10B981',
+        bgColor: 'rgba(16, 185, 129, 0.12)',
+        borderClass: 'border-emerald-100 dark:border-emerald-900/50',
+        bgClass: 'bg-emerald-50 dark:bg-emerald-950/30',
+        textClass: 'text-emerald-600 dark:text-emerald-300'
+    }
+};
+
 const buildAreaTrendData = () => {
     const yearlyAdditions = new Map();
     let baseClean = 0;
@@ -157,90 +181,136 @@ const buildAreaTrendData = () => {
     const labels = ['現況', ...years.map(formatYearLabel)];
     const cleanValues = [baseClean];
     const prodValues = [baseProd];
-    const additions = [{ year: 0, clean: baseClean, prod: baseProd }];
+    const additions = [{ year: 0, clean: baseClean, prod: baseProd, cleanRate: null, prodRate: null }];
 
     let runningClean = baseClean;
     let runningProd = baseProd;
 
     years.forEach(year => {
         const add = yearlyAdditions.get(year) || { clean: 0, prod: 0 };
+        const cleanRate = runningClean > 0 ? add.clean / runningClean : null;
+        const prodRate = runningProd > 0 ? add.prod / runningProd : null;
+
         runningClean += add.clean;
         runningProd += add.prod;
+
         cleanValues.push(runningClean);
         prodValues.push(runningProd);
-        additions.push({ year, clean: add.clean, prod: add.prod });
+        additions.push({ year, clean: add.clean, prod: add.prod, cleanRate, prodRate });
     });
 
     return { labels, cleanValues, prodValues, additions };
 };
 
+const getTrendSeries = (trend) => {
+    const metric = trendMetricOptions[state.trendMetric] || trendMetricOptions.clean;
+    const cumulativeValues = state.trendMetric === 'prod' ? trend.prodValues : trend.cleanValues;
+    const annualValues = trend.additions.map(row => state.trendMetric === 'prod' ? row.prod : row.clean);
+    const annualRates = trend.additions.map(row => state.trendMetric === 'prod' ? row.prodRate : row.cleanRate);
+    const latest = cumulativeValues[cumulativeValues.length - 1] || 0;
+    const latestAnnual = annualValues[annualValues.length - 1] || 0;
+    const latestRate = annualRates[annualRates.length - 1];
+
+    return { metric, cumulativeValues, annualValues, annualRates, latest, latestAnnual, latestRate };
+};
+
+const formatGrowthRate = (rate) => {
+    if (rate === null || rate === undefined || !Number.isFinite(rate)) return '-';
+    return `${(rate * 100).toFixed(1)}%`;
+};
+
+const renderTrendMetricButton = (key, label) => `
+    <button onclick="window.app.setTrendMetric('${key}')" class="px-4 py-2 rounded-xl text-sm font-black transition-all ${state.trendMetric === key ? 'bg-blue-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}">
+        ${label}
+    </button>`;
+
 const renderTrendModal = () => {
     if (!state.isTrendOpen) return '';
+
     const trend = buildAreaTrendData();
-    const latestClean = trend.cleanValues[trend.cleanValues.length - 1] || 0;
-    const latestProd = trend.prodValues[trend.prodValues.length - 1] || 0;
-    const latestTotal = latestClean + latestProd;
-    const cleanDisplay = formatArea(latestClean, state.unit);
-    const prodDisplay = formatArea(latestProd, state.unit);
-    const totalDisplay = formatArea(latestTotal, state.unit);
+    const series = getTrendSeries(trend);
+    const latestDisplay = formatArea(series.latest, state.unit);
+    const latestAnnualDisplay = formatArea(series.latestAnnual, state.unit);
+    const totalClean = trend.cleanValues[trend.cleanValues.length - 1] || 0;
+    const totalProd = trend.prodValues[trend.prodValues.length - 1] || 0;
+    const totalDisplay = formatArea(totalClean + totalProd, state.unit);
 
     return `
         <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onclick="window.app.closeTrendModal()">
-            <section class="w-full max-w-6xl max-h-[90vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()">
-                <div class="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4">
+            <section class="w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()">
+                <div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4">
                     <div>
                         <div class="flex items-center gap-2">
                             <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span>
-                            <h2 class="text-xl font-black text-slate-800 dark:text-slate-100">無塵室 & 生產週邊面積成長趨勢</h2>
+                            <h2 class="text-xl font-black text-slate-800 dark:text-slate-100">面積成長趨勢</h2>
                         </div>
-                        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">依「預計成廠年份」累計；沒有年份的已成廠資料歸入現況基準。</p>
+                        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">依「預計成廠年份」累計；沒有年份的已成廠資料歸入現況基準。上圖為累計總量，下圖為年度新增量。</p>
                     </div>
-                    <button onclick="window.app.closeTrendModal()" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
-                        <i data-lucide="x" class="w-6 h-6"></i>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        ${renderTrendMetricButton('clean', '無塵室面積')}
+                        ${renderTrendMetricButton('prod', '生產週邊面積')}
+                        <button onclick="window.app.closeTrendModal()" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                            <i data-lucide="x" class="w-6 h-6"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 pt-5">
-                    <div class="rounded-xl border border-sky-100 dark:border-sky-900/50 bg-sky-50 dark:bg-sky-950/30 p-4">
-                        <div class="text-sm font-bold text-sky-600 dark:text-sky-300">累計無塵室面積</div>
-                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${cleanDisplay.val}<span class="ml-1 text-sm text-slate-400">${cleanDisplay.unit}</span></div>
+                    <div class="rounded-xl border ${series.metric.borderClass} ${series.metric.bgClass} p-4">
+                        <div class="text-sm font-bold ${series.metric.textClass}">目前累計${series.metric.shortLabel}</div>
+                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${latestDisplay.val}<span class="ml-1 text-sm text-slate-400">${latestDisplay.unit}</span></div>
                     </div>
-                    <div class="rounded-xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 p-4">
-                        <div class="text-sm font-bold text-emerald-600 dark:text-emerald-300">累計生產週邊面積</div>
-                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${prodDisplay.val}<span class="ml-1 text-sm text-slate-400">${prodDisplay.unit}</span></div>
+                    <div class="rounded-xl border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50 dark:bg-indigo-950/30 p-4">
+                        <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">最後年度新增量</div>
+                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${latestAnnualDisplay.val}<span class="ml-1 text-sm text-slate-400">${latestAnnualDisplay.unit}</span></div>
+                        <div class="mt-1 text-xs font-bold text-slate-400">年增率：${formatGrowthRate(series.latestRate)}</div>
                     </div>
                     <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
-                        <div class="text-sm font-bold text-slate-500 dark:text-slate-300">合計面積</div>
+                        <div class="text-sm font-bold text-slate-500 dark:text-slate-300">無塵室 + 生產週邊合計</div>
                         <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${totalDisplay.val}<span class="ml-1 text-sm text-slate-400">${totalDisplay.unit}</span></div>
                     </div>
                 </div>
 
-                <div class="px-6 py-5">
-                    <div class="h-[420px] rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
-                        <canvas id="area-trend-chart"></canvas>
+                <div class="px-6 py-5 space-y-5">
+                    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
+                        <div class="mb-3 flex items-center justify-between">
+                            <h3 class="text-sm font-black text-slate-600 dark:text-slate-300">累計總面積趨勢｜${series.metric.label}</h3>
+                            <span class="text-xs font-bold text-slate-400">折線圖 / 絕對數字</span>
+                        </div>
+                        <div class="h-[300px]"><canvas id="area-cumulative-chart"></canvas></div>
+                    </div>
+
+                    <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
+                        <div class="mb-3 flex items-center justify-between">
+                            <h3 class="text-sm font-black text-slate-600 dark:text-slate-300">年增面積量｜${series.metric.label}</h3>
+                            <span class="text-xs font-bold text-slate-400">柱狀圖 / 絕對數字 + 年增比例</span>
+                        </div>
+                        <div class="h-[300px]"><canvas id="area-annual-chart"></canvas></div>
                     </div>
                 </div>
 
                 <div class="px-6 pb-6">
-                    <h3 class="mb-3 text-sm font-black text-slate-600 dark:text-slate-300">年度新增明細</h3>
+                    <h3 class="mb-3 text-sm font-black text-slate-600 dark:text-slate-300">${series.metric.shortLabel}年度明細</h3>
                     <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
                         <table class="w-full text-sm">
                             <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300">
                                 <tr>
                                     <th class="px-4 py-2 text-left">年份</th>
-                                    <th class="px-4 py-2 text-right">新增無塵室</th>
-                                    <th class="px-4 py-2 text-right">新增生產週邊</th>
+                                    <th class="px-4 py-2 text-right">年度新增量</th>
+                                    <th class="px-4 py-2 text-right">年增比例</th>
+                                    <th class="px-4 py-2 text-right">累計總面積</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-                                ${trend.additions.map(row => {
-                                    const clean = formatArea(row.clean, state.unit);
-                                    const prod = formatArea(row.prod, state.unit);
+                                ${trend.additions.map((row, idx) => {
+                                    const annual = formatArea(series.annualValues[idx] || 0, state.unit);
+                                    const cumulative = formatArea(series.cumulativeValues[idx] || 0, state.unit);
                                     return `
                                         <tr class="bg-white dark:bg-slate-900">
                                             <td class="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">${formatYearLabel(row.year)}</td>
-                                            <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${clean.val} ${clean.unit}</td>
-                                            <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${prod.val} ${prod.unit}</td>
+                                            <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${annual.val} ${annual.unit}</td>
+                                            <td class="px-4 py-2 text-right font-mono text-slate-500 dark:text-slate-300">${formatGrowthRate(series.annualRates[idx])}</td>
+                                            <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${cumulative.val} ${cumulative.unit}</td>
                                         </tr>`;
                                 }).join('')}
                             </tbody>
@@ -251,48 +321,67 @@ const renderTrendModal = () => {
         </div>`;
 };
 
+const destroyTrendCharts = () => {
+    Object.values(trendCharts).forEach(chart => {
+        if (chart) chart.destroy();
+    });
+    trendCharts = { cumulative: null, annual: null };
+};
+
 const drawTrendChart = () => {
     if (!state.isTrendOpen) return;
-    const canvas = document.getElementById('area-trend-chart');
-    if (!canvas || typeof Chart === 'undefined') return;
+    const cumulativeCanvas = document.getElementById('area-cumulative-chart');
+    const annualCanvas = document.getElementById('area-annual-chart');
+    if (!cumulativeCanvas || !annualCanvas || typeof Chart === 'undefined') return;
 
-    if (trendChart) {
-        trendChart.destroy();
-        trendChart = null;
-    }
+    destroyTrendCharts();
 
     const trend = buildAreaTrendData();
+    const series = getTrendSeries(trend);
     const toUnitValue = (value) => state.unit === 'ping' ? value * 0.3025 : value;
     const unitLabel = state.unit === 'ping' ? '坪' : 'm²';
     const textColor = state.isDarkMode ? '#CBD5E1' : '#334155';
+    const mutedColor = state.isDarkMode ? '#94A3B8' : '#64748B';
     const gridColor = state.isDarkMode ? 'rgba(148,163,184,0.18)' : 'rgba(148,163,184,0.28)';
 
-    trendChart = new Chart(canvas, {
+    const annualDisplayValues = series.annualValues.map(toUnitValue);
+    const cumulativeDisplayValues = series.cumulativeValues.map(toUnitValue);
+
+    const barValueLabelPlugin = {
+        id: 'barValueLabelPlugin',
+        afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.fillStyle = mutedColor;
+
+            chart.getDatasetMeta(0).data.forEach((bar, index) => {
+                const value = annualDisplayValues[index] || 0;
+                if (value <= 0) return;
+                const rate = formatGrowthRate(series.annualRates[index]);
+                const label = `${Math.round(value).toLocaleString()} ${unitLabel}${rate !== '-' ? ` / ${rate}` : ''}`;
+                ctx.fillText(label, bar.x, bar.y - 6);
+            });
+            ctx.restore();
+        }
+    };
+
+    trendCharts.cumulative = new Chart(cumulativeCanvas, {
         type: 'line',
         data: {
             labels: trend.labels,
-            datasets: [
-                {
-                    label: `累計無塵室面積 (${unitLabel})`,
-                    data: trend.cleanValues.map(toUnitValue),
-                    borderColor: '#0EA5E9',
-                    backgroundColor: 'rgba(14, 165, 233, 0.12)',
-                    tension: 0.35,
-                    fill: true,
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                },
-                {
-                    label: `累計生產週邊面積 (${unitLabel})`,
-                    data: trend.prodValues.map(toUnitValue),
-                    borderColor: '#10B981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.10)',
-                    tension: 0.35,
-                    fill: true,
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                }
-            ]
+            datasets: [{
+                label: `累計${series.metric.label} (${unitLabel})`,
+                data: cumulativeDisplayValues,
+                borderColor: series.metric.color,
+                backgroundColor: series.metric.bgColor,
+                tension: 0.35,
+                fill: true,
+                pointRadius: 4,
+                pointHoverRadius: 6
+            }]
         },
         options: {
             responsive: true,
@@ -308,6 +397,48 @@ const drawTrendChart = () => {
             },
             scales: {
                 x: { ticks: { color: textColor, font: { weight: 'bold' } }, grid: { color: gridColor } },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
+                    grid: { color: gridColor }
+                }
+            }
+        }
+    });
+
+    trendCharts.annual = new Chart(annualCanvas, {
+        type: 'bar',
+        data: {
+            labels: trend.labels,
+            datasets: [{
+                label: `年增${series.metric.label} (${unitLabel})`,
+                data: annualDisplayValues,
+                borderColor: series.metric.color,
+                backgroundColor: series.metric.bgColor,
+                borderWidth: 2,
+                borderRadius: 8,
+                maxBarThickness: 64
+            }]
+        },
+        plugins: [barValueLabelPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 24 } },
+            plugins: {
+                legend: { labels: { color: textColor, font: { weight: 'bold' } } },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const value = Math.round(ctx.parsed.y).toLocaleString();
+                            const rate = formatGrowthRate(series.annualRates[ctx.dataIndex]);
+                            return `年增量: ${value} ${unitLabel}｜年增比例: ${rate}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { color: textColor, font: { weight: 'bold' } }, grid: { display: false } },
                 y: {
                     beginAtZero: true,
                     ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
@@ -445,6 +576,11 @@ window.app = {
         }
         render();
     },
+    setTrendMetric: (metric) => {
+        if (!trendMetricOptions[metric]) return;
+        state.trendMetric = metric;
+        render();
+    },
     toggleFilterPanel: () => {
         state.isFilterCollapsed = !state.isFilterCollapsed;
         render();
@@ -455,10 +591,7 @@ window.app = {
     },
     closeTrendModal: () => {
         state.isTrendOpen = false;
-        if (trendChart) {
-            trendChart.destroy();
-            trendChart = null;
-        }
+        destroyTrendCharts();
         render();
     },
     selectZone: (id) => {
