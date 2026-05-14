@@ -158,6 +158,8 @@ const render = () => {
         && !HIDDEN_MATRIX_FLOORS.has(String(f || '').toUpperCase().trim())
     ));
 
+    // 注意：ALL 只從樓層列隱藏，不從矩陣資料移除。
+    // renderMatrix 會用這份完整資料計算各棟上方加總，因此未成廠 ALL 仍會納入該棟加總。
     const matrixData = state.displayMode === 'load'
         ? appData.processed.map(item => ({
             ...item,
