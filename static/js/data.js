@@ -5,6 +5,11 @@ const toNumber = (value) => {
     return Number.isFinite(num) ? num : 0;
 };
 
+const toText = (value) => {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+};
+
 const isUnknownFloorSummary = (floorName) => String(floorName || '').toUpperCase().trim() === 'ALL';
 
 export const processRawData = (data) => {
@@ -45,6 +50,7 @@ export const processRawData = (data) => {
 
             const rawStatus = f["狀態"];
             const floorStatus = (rawStatus && String(rawStatus).trim() === '未成廠') ? '未成廠' : '已成廠';
+            const expectedCompletionYear = toText(f["預計成廠年份"]);
 
             const rawTotalArea = toNumber(f["樓地板面積(M2)"]);
             const fCleanArea = toNumber(f["無塵室面積(M2)"]);
@@ -69,6 +75,7 @@ export const processRawData = (data) => {
                 area: fTotalArea,
                 height: toNumber(f["樓層高度(cm)"]),
                 floorLoad: fFloorLoad,
+                expectedCompletionYear,
                 cleanRoomArea: fCleanArea,
                 prodArea: fProdArea,
                 facArea: fFacArea,
