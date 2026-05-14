@@ -40,7 +40,6 @@ async function buildTrendData() {
     const clean = Number(item.cleanRoomArea || 0);
     const prod = Number(item.prodArea || 0);
 
-    // 現況：已成廠或沒有預計年份，只做累積基準，不列入年增。
     if (item.status !== '未成廠' || year === null) {
       base.clean += clean;
       base.prod += prod;
@@ -98,7 +97,7 @@ function renderMetricButton(metric) {
     </button>`;
 }
 
-function renderMetricSection(metric, trend) {
+function renderChartSection(metric, trend) {
   const data = trend.metrics[metric.key];
   const latest = displayArea(data.cumulative[data.cumulative.length - 1] || 0);
   const latestAnnual = displayArea(data.annual[data.annual.length - 1] || 0);
@@ -111,7 +110,7 @@ function renderMetricSection(metric, trend) {
             <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl border ${metric.card}"><i data-lucide="bar-chart-3" class="w-4 h-4"></i></span>
             <h3 class="text-base font-black text-slate-700 dark:text-slate-100">${metric.label}</h3>
           </div>
-          <p class="mt-1 text-xs font-bold text-slate-400">同一張圖呈現累積總面積折線圖 + 年增面積柱狀圖；現況只作為累積基準，年增量固定為 0。</p>
+          <p class="mt-1 text-xs font-bold text-slate-400">同一張圖表內呈現「累積總面積折線」與「年增面積柱狀」。柱狀圖刻度已壓低，與趨勢線保留較明顯間距。</p>
         </div>
         <div class="grid grid-cols-2 gap-2 min-w-[280px]">
           <div class="rounded-xl border p-3 ${metric.card}">
@@ -125,33 +124,52 @@ function renderMetricSection(metric, trend) {
           </div>
         </div>
       </div>
+      <div class="h-[390px]"><canvas id="trend-chart-${metric.key}"></canvas></div>
+    </section>`;
+}
 
-      <div class="h-[340px]"><canvas id="trend-chart-${metric.key}"></canvas></div>
-
-      <div class="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300">
-            <tr>
-              <th class="px-4 py-2 text-left">年份</th>
-              <th class="px-4 py-2 text-right">年增面積</th>
-              <th class="px-4 py-2 text-right">年增比例</th>
-              <th class="px-4 py-2 text-right">累積總面積</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-            ${data.rows.map((row) => {
-              const annual = displayArea(row.annual);
-              const cumulative = displayArea(row.cumulative);
-              return `
-                <tr class="bg-white dark:bg-slate-900">
-                  <td class="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">${yearLabel(row.year)}</td>
-                  <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${annual.val} ${annual.unit}</td>
-                  <td class="px-4 py-2 text-right font-mono text-slate-500 dark:text-slate-300">${formatRate(row.rate)}</td>
-                  <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${cumulative.val} ${cumulative.unit}</td>
-                </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
+function renderTables(trend) {
+  if (!selected.length) return '';
+  return `
+    <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
+      <div class="mb-4 flex items-center gap-2">
+        <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500"><i data-lucide="table-2" class="w-4 h-4"></i></span>
+        <h3 class="text-base font-black text-slate-700 dark:text-slate-100">年度明細表</h3>
+      </div>
+      <div class="space-y-5">
+        ${selected.map((key) => {
+          const metric = METRICS[key];
+          const data = trend.metrics[key];
+          return `
+            <div>
+              <h4 class="mb-2 text-sm font-black ${metric.card} inline-flex rounded-lg border px-3 py-1">${metric.label}</h4>
+              <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                <table class="w-full text-sm">
+                  <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300">
+                    <tr>
+                      <th class="px-4 py-2 text-left">年份</th>
+                      <th class="px-4 py-2 text-right">年增面積</th>
+                      <th class="px-4 py-2 text-right">年增比例</th>
+                      <th class="px-4 py-2 text-right">累積總面積</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                    ${data.rows.map((row) => {
+                      const annual = displayArea(row.annual);
+                      const cumulative = displayArea(row.cumulative);
+                      return `
+                        <tr class="bg-white dark:bg-slate-900">
+                          <td class="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">${yearLabel(row.year)}</td>
+                          <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${annual.val} ${annual.unit}</td>
+                          <td class="px-4 py-2 text-right font-mono text-slate-500 dark:text-slate-300">${formatRate(row.rate)}</td>
+                          <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${cumulative.val} ${cumulative.unit}</td>
+                        </tr>`;
+                    }).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>`;
+        }).join('')}
       </div>
     </section>`;
 }
@@ -173,7 +191,7 @@ async function openTrendOverlay() {
             <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span>
             <h2 class="text-xl font-black text-slate-800 dark:text-slate-100">面積成長趨勢</h2>
           </div>
-          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">可同時選取無塵室面積與生產週邊面積；每個指標各自一張複合圖，上下排列。</p>
+          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">上方集中呈現圖表，下方集中呈現明細表；現況只作為累積基準，不列入年增面積。</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           ${Object.values(METRICS).map(renderMetricButton).join('')}
@@ -189,7 +207,8 @@ async function openTrendOverlay() {
       </div>
 
       <div class="px-6 py-5 space-y-5">
-        ${selected.length ? selected.map((key) => renderMetricSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個面積指標</div>'}
+        ${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個面積指標</div>'}
+        ${renderTables(trend)}
       </div>
     </section>`;
 
@@ -225,6 +244,11 @@ function drawCharts(trend) {
     const canvas = document.getElementById(`trend-chart-${key}`);
     if (!canvas) return;
 
+    const maxAnnual = Math.max(...annual, 0);
+    const minCumulative = Math.min(...cumulative.filter((value) => value > 0), 0);
+    const maxCumulative = Math.max(...cumulative, 0);
+    const cumulativePadding = Math.max((maxCumulative - minCumulative) * 0.18, maxCumulative * 0.08, 1);
+
     const labelPlugin = {
       id: `trendLabels-${key}`,
       afterDatasetsDraw(chart) {
@@ -238,7 +262,7 @@ function drawCharts(trend) {
         bars.forEach((bar, index) => {
           const value = annual[index] || 0;
           if (index === 0 || value <= 0) return;
-          ctx.fillText(`${Math.round(value).toLocaleString()} ${uLabel} / ${formatRate(data.rates[index])}`, bar.x, bar.y - 6);
+          ctx.fillText(`${Math.round(value).toLocaleString()} ${uLabel} / ${formatRate(data.rates[index])}`, bar.x, bar.y - 8);
         });
         ctx.restore();
       }
@@ -248,8 +272,31 @@ function drawCharts(trend) {
       data: {
         labels: trend.labels,
         datasets: [
-          { type: 'bar', label: `年增${metric.label} (${uLabel})`, data: annual, borderColor: metric.color, backgroundColor: metric.bg, borderWidth: 2, borderRadius: 8, maxBarThickness: 58, yAxisID: 'annualAxis' },
-          { type: 'line', label: `累積${metric.label} (${uLabel})`, data: cumulative, borderColor: metric.color, backgroundColor: metric.bg, tension: .35, fill: false, pointRadius: 4, pointHoverRadius: 6, yAxisID: 'cumulativeAxis' }
+          {
+            type: 'bar',
+            label: `年增${metric.label} (${uLabel})`,
+            data: annual,
+            borderColor: metric.color,
+            backgroundColor: metric.bg,
+            borderWidth: 2,
+            borderRadius: 8,
+            maxBarThickness: 52,
+            yAxisID: 'annualAxis',
+            order: 2
+          },
+          {
+            type: 'line',
+            label: `累積${metric.label} (${uLabel})`,
+            data: cumulative,
+            borderColor: metric.color,
+            backgroundColor: metric.bg,
+            tension: .35,
+            fill: false,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            yAxisID: 'cumulativeAxis',
+            order: 1
+          }
         ]
       },
       plugins: [labelPlugin],
@@ -257,7 +304,7 @@ function drawCharts(trend) {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
-        layout: { padding: { top: 28 } },
+        layout: { padding: { top: 34, right: 8 } },
         plugins: {
           legend: { labels: { color: textColor, font: { weight: 'bold' } } },
           tooltip: {
@@ -270,8 +317,22 @@ function drawCharts(trend) {
         },
         scales: {
           x: { ticks: { color: textColor, font: { weight: 'bold' } }, grid: { display: false } },
-          annualAxis: { beginAtZero: true, position: 'left', ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() }, grid: { color: gridColor }, title: { display: true, text: `年增面積 (${uLabel})`, color: mutedColor, font: { weight: 'bold' } } },
-          cumulativeAxis: { beginAtZero: true, position: 'right', ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() }, grid: { drawOnChartArea: false }, title: { display: true, text: `累積總面積 (${uLabel})`, color: mutedColor, font: { weight: 'bold' } } }
+          annualAxis: {
+            beginAtZero: true,
+            suggestedMax: maxAnnual > 0 ? maxAnnual * 2.2 : 10,
+            position: 'left',
+            ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
+            grid: { color: gridColor },
+            title: { display: true, text: `年增面積 (${uLabel})`, color: mutedColor, font: { weight: 'bold' } }
+          },
+          cumulativeAxis: {
+            min: Math.max(0, minCumulative - cumulativePadding),
+            suggestedMax: maxCumulative + cumulativePadding,
+            position: 'right',
+            ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: `累積總面積 (${uLabel})`, color: mutedColor, font: { weight: 'bold' } }
+          }
         }
       }
     });
