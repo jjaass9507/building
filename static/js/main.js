@@ -4,30 +4,29 @@ import { renderHeader, renderMatrix, renderPanel } from './components.js';
 
 // --- 狀態管理 (State) ---
 const state = {
-    displayMode: 'area', 
-    barLabelType: 'val', 
-    selectedZone: null,     
-    selectedBuilding: null, 
-    filterBuildings: [], 
+    displayMode: 'area',
+    barLabelType: 'val',
+    selectedZone: null,
+    selectedBuilding: null,
+    filterBuildings: [],
     unit: 'ping',
     includeUnfinished: false,
     isDarkMode: localStorage.getItem('theme') === 'dark',
     currentUser: null,
     uploadStatus: null,
     isUploading: false,
-    isTrendOpen: false
+    isTrendOpen: false,
+    isFilterCollapsed: true
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
 const isHiddenMatrixFloor = (floor) => HIDDEN_MATRIX_FLOORS.has(String(floor || '').toUpperCase().trim());
 let trendChart = null;
 
-// 初始主題檢查
 if (state.isDarkMode) {
     document.documentElement.classList.add('dark');
 }
 
-// 資料快取
 let appData = {
     source: [],
     processed: [],
@@ -66,21 +65,59 @@ const createTrendButton = () => `
         <i data-lucide="line-chart" class="w-3.5 h-3.5"></i> 成長趨勢
     </button>`;
 
+const createFilterToggleButton = () => `
+    <button onclick="window.app.toggleFilterPanel()" class="flex items-center gap-1 px-3 py-1 rounded text-base transition-all ${state.isFilterCollapsed ? 'bg-slate-800 dark:bg-blue-600 text-white border border-slate-800 dark:border-blue-600 shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'} font-bold">
+        <i data-lucide="${state.isFilterCollapsed ? 'sliders-horizontal' : 'chevron-up'}" class="w-3.5 h-3.5"></i>
+        ${state.isFilterCollapsed ? '展開篩選' : '收合篩選'}
+    </button>`;
+
+const applyCompactHeader = (headerHtml) => {
+    if (!state.isFilterCollapsed) return headerHtml;
+
+    return headerHtml
+        .replace(
+            '<div class="h-px w-full bg-slate-100 dark:bg-slate-800"></div>',
+            '<div class="hidden h-px w-full bg-slate-100 dark:bg-slate-800"></div>'
+        )
+        .replace(
+            '<div class="flex flex-col xl:flex-row gap-4 items-start">',
+            '<div class="hidden flex-col xl:flex-row gap-4 items-start">'
+        )
+        .replace(
+            '<div class="flex flex-wrap items-center gap-6 px-1 py-1 border-t border-slate-50 dark:border-slate-800 mt-1">',
+            '<div class="hidden flex-wrap items-center gap-6 px-1 py-1 border-t border-slate-50 dark:border-slate-800 mt-1">'
+        )
+        .replace(
+            '<div class="max-w-[1920px] mx-auto px-4 py-3">',
+            '<div class="max-w-[1920px] mx-auto px-4 py-2">'
+        );
+};
+
 const injectHeaderButtons = (headerHtml) => {
     let nextHtml = headerHtml;
+
     if (!nextHtml.includes("displayMode', 'load'")) {
         nextHtml = nextHtml.replace(
             /(<button onclick="window\.app\.updateState\('displayMode', 'height'\)"[\s\S]*?<\/button>)/,
             `$1${createLoadModeButton()}`
         );
     }
+
     if (!nextHtml.includes('openTrendModal')) {
         nextHtml = nextHtml.replace(
             /(<\/div>\s*<\/div>\s*<div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"><\/div>)/,
             `${createTrendButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
         );
     }
-    return nextHtml;
+
+    if (!nextHtml.includes('toggleFilterPanel')) {
+        nextHtml = nextHtml.replace(
+            /(<button onclick="window\.app\.updateState\('isDarkMode',[\s\S]*?<\/button>)/,
+            `$1${createFilterToggleButton()}`
+        );
+    }
+
+    return applyCompactHeader(nextHtml);
 };
 
 const parseExpectedYear = (value) => {
@@ -89,8 +126,7 @@ const parseExpectedYear = (value) => {
     const match = text.match(/Y\s*(\d{1,4})/i) || text.match(/(\d{4})/);
     if (!match) return null;
     const num = Number(match[1]);
-    if (!Number.isFinite(num)) return null;
-    return num >= 1000 ? num : num;
+    return Number.isFinite(num) ? num : null;
 };
 
 const formatYearLabel = (year) => year === 0 ? '現況' : `Y${year}`;
@@ -135,7 +171,7 @@ const buildAreaTrendData = () => {
         additions.push({ year, clean: add.clean, prod: add.prod });
     });
 
-    return { labels, cleanValues, prodValues, additions, baseClean, baseProd };
+    return { labels, cleanValues, prodValues, additions };
 };
 
 const renderTrendModal = () => {
@@ -263,9 +299,7 @@ const drawTrendChart = () => {
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: {
-                    labels: { color: textColor, font: { weight: 'bold' } }
-                },
+                legend: { labels: { color: textColor, font: { weight: 'bold' } } },
                 tooltip: {
                     callbacks: {
                         label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.y).toLocaleString()} ${unitLabel}`
@@ -273,16 +307,10 @@ const drawTrendChart = () => {
                 }
             },
             scales: {
-                x: {
-                    ticks: { color: textColor, font: { weight: 'bold' } },
-                    grid: { color: gridColor }
-                },
+                x: { ticks: { color: textColor, font: { weight: 'bold' } }, grid: { color: gridColor } },
                 y: {
                     beginAtZero: true,
-                    ticks: {
-                        color: textColor,
-                        callback: (value) => Number(value).toLocaleString()
-                    },
+                    ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
                     grid: { color: gridColor }
                 }
             }
@@ -309,22 +337,18 @@ const renderAdminUploadPanel = () => {
         </div>` : '';
 
     return `
-        <section class="mx-2 md:mx-6 mt-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-4 transition-colors">
+        <section class="mx-2 md:mx-6 mt-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-3 transition-colors">
             <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
                 <div>
                     <div class="flex items-center gap-2">
                         <span class="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/40 px-2.5 py-1 text-xs font-black text-blue-700 dark:text-blue-300">ADMIN</span>
                         <h2 class="text-lg font-black text-slate-800 dark:text-slate-100">資料更新</h2>
                     </div>
-                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        上傳樓層面積資訊 Excel（.xlsx）後，系統會先備份上一版 data.json，再更新目前資料。
-                    </p>
+                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">上傳樓層面積資訊 Excel（.xlsx）後，系統會先備份上一版 data.json，再更新目前資料。</p>
                 </div>
                 <form class="flex flex-col sm:flex-row gap-2 sm:items-center" onsubmit="window.app.uploadDataFile(event)">
                     <input id="admin-data-file" name="file" type="file" accept=".xlsx" class="block w-full sm:w-80 text-sm text-slate-500 dark:text-slate-300 file:mr-4 file:rounded-full file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-sm file:font-bold file:text-white hover:file:bg-slate-700 dark:file:bg-blue-600 dark:hover:file:bg-blue-500" ${state.isUploading ? 'disabled' : ''}>
-                    <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" ${state.isUploading ? 'disabled' : ''}>
-                        ${state.isUploading ? '更新中...' : '上傳並更新'}
-                    </button>
+                    <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" ${state.isUploading ? 'disabled' : ''}>${state.isUploading ? '更新中...' : '上傳並更新'}</button>
                 </form>
             </div>
             ${statusHtml}
@@ -333,7 +357,7 @@ const renderAdminUploadPanel = () => {
 
 const loadData = async () => {
     const res = await fetch('/api/data', { cache: 'no-store' });
-    if (!res.ok) throw new Error("API Error");
+    if (!res.ok) throw new Error('API Error');
     const rawData = await res.json();
     const result = processRawData(rawData);
     appData.source = rawData;
@@ -342,26 +366,18 @@ const loadData = async () => {
     appData.sortedFloors = result.sortedFloorLabels;
 };
 
-// --- 更新畫面 ---
 const render = () => {
     const scrollContainer = document.getElementById('matrix-scroll-container');
-    let savedScrollLeft = 0;
-    let savedScrollTop = 0;
-    if (scrollContainer) {
-        savedScrollLeft = scrollContainer.scrollLeft;
-        savedScrollTop = scrollContainer.scrollTop;
-    }
-
+    const savedScrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
+    const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
     const app = document.getElementById('app');
 
-    // 計算總計邏輯：ALL 是資料承載列，不顯示在樓層，但外層加總仍要納入。
-    const dataForTotal = state.includeUnfinished 
-        ? appData.processed 
+    const dataForTotal = state.includeUnfinished
+        ? appData.processed
         : appData.processed.filter(d => d.status !== '未成廠' || isHiddenMatrixFloor(d.floor));
 
     const totalArea = dataForTotal.reduce((acc, curr) => acc + (curr.area || 0), 0);
     const totalClean = dataForTotal.reduce((acc, curr) => acc + (curr.cleanRoomArea || 0), 0);
-    
     const totals = {
         area: formatArea(totalArea, state.unit),
         cleanRoom: formatArea(totalClean, state.unit)
@@ -376,13 +392,8 @@ const render = () => {
             .filter(d => d.building === bldg && !isHiddenMatrixFloor(d.floor))
             .forEach(d => presentFloors.add(d.floor));
     });
-    const activeFloors = appData.sortedFloors.filter(f => (
-        presentFloors.has(f)
-        && !isHiddenMatrixFloor(f)
-    ));
+    const activeFloors = appData.sortedFloors.filter(f => presentFloors.has(f) && !isHiddenMatrixFloor(f));
 
-    // ALL 是資料承載列，不應顯示在樓層，但必須參與單一棟別表頭的全棟比例圖計算。
-    // 這裡轉成內部 summary-only floor，避免元件內部或 dataMap 把 floor=ALL 當成一般樓層處理。
     const summaryMatrixRows = appData.processed.map(item => (
         isHiddenMatrixFloor(item.floor)
             ? { ...item, floor: '__BUILDING_SUMMARY__', isSummaryOnly: true }
@@ -390,10 +401,7 @@ const render = () => {
     ));
 
     const matrixData = state.displayMode === 'load'
-        ? summaryMatrixRows.map(item => ({
-            ...item,
-            usageLabel: formatFloorLoadCell(item.floorLoad)
-        }))
+        ? summaryMatrixRows.map(item => ({ ...item, usageLabel: formatFloorLoadCell(item.floorLoad) }))
         : summaryMatrixRows;
 
     const dataMap = {};
@@ -406,8 +414,8 @@ const render = () => {
     app.innerHTML = `
         ${headerHtml}
         ${renderAdminUploadPanel()}
-        <main class="flex-1 p-2 md:p-6 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
-            ${renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)} 
+        <main class="flex-1 p-2 md:p-4 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
+            ${renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
         ${renderTrendModal()}
@@ -423,10 +431,9 @@ const render = () => {
     }
 };
 
-// --- 公開方法 ---
 window.app = {
-    updateState: (k, v) => { 
-        state[k] = v; 
+    updateState: (k, v) => {
+        state[k] = v;
         if (k === 'isDarkMode') {
             if (v) {
                 document.documentElement.classList.add('dark');
@@ -436,7 +443,11 @@ window.app = {
                 localStorage.setItem('theme', 'light');
             }
         }
-        render(); 
+        render();
+    },
+    toggleFilterPanel: () => {
+        state.isFilterCollapsed = !state.isFilterCollapsed;
+        render();
     },
     openTrendModal: () => {
         state.isTrendOpen = true;
@@ -450,30 +461,28 @@ window.app = {
         }
         render();
     },
-    selectZone: (id) => { 
-        state.selectedZone = appData.processed.find(d => d.id === id); 
-        state.selectedBuilding = null; 
-        render(); 
+    selectZone: (id) => {
+        state.selectedZone = appData.processed.find(d => d.id === id);
+        state.selectedBuilding = null;
+        render();
     },
-    selectBuilding: (b) => { 
-        state.selectedBuilding = b; 
-        state.selectedZone = null; 
-        render(); 
+    selectBuilding: (b) => {
+        state.selectedBuilding = b;
+        state.selectedZone = null;
+        render();
     },
-    closePanel: () => { 
-        state.selectedZone = null; 
-        state.selectedBuilding = null; 
-        render(); 
+    closePanel: () => {
+        state.selectedZone = null;
+        state.selectedBuilding = null;
+        render();
     },
     toggleBuilding: (bldg) => {
         if (bldg === 'ALL') {
             state.filterBuildings = [];
+        } else if (state.filterBuildings.includes(bldg)) {
+            state.filterBuildings = state.filterBuildings.filter(b => b !== bldg);
         } else {
-            if (state.filterBuildings.includes(bldg)) {
-                state.filterBuildings = state.filterBuildings.filter(b => b !== bldg);
-            } else {
-                state.filterBuildings.push(bldg);
-            }
+            state.filterBuildings.push(bldg);
         }
         render();
     },
@@ -490,16 +499,12 @@ window.app = {
 
         const formData = new FormData();
         formData.append('file', file);
-
         state.isUploading = true;
         state.uploadStatus = null;
         render();
 
         try {
-            const res = await fetch('/api/admin/upload-data', {
-                method: 'POST',
-                body: formData
-            });
+            const res = await fetch('/api/admin/upload-data', { method: 'POST', body: formData });
             const result = await res.json();
 
             if (!res.ok || !result.success) {
@@ -520,10 +525,7 @@ window.app = {
             state.selectedBuilding = null;
             fileInput.value = '';
         } catch (e) {
-            state.uploadStatus = {
-                success: false,
-                message: e.message || '資料更新失敗。'
-            };
+            state.uploadStatus = { success: false, message: e.message || '資料更新失敗。' };
         } finally {
             state.isUploading = false;
             render();
@@ -531,7 +533,6 @@ window.app = {
     }
 };
 
-// --- 初始化 ---
 const init = async () => {
     try {
         const meRes = await fetch('/api/me', { cache: 'no-store' });
@@ -540,10 +541,10 @@ const init = async () => {
         }
 
         await loadData();
-        
+
         if (window.innerWidth < 768) {
             const allBuildings = Object.keys(appData.meta);
-            const target = "K18"; 
+            const target = 'K18';
             if (allBuildings.includes(target)) {
                 state.filterBuildings = [target];
             }
