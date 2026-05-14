@@ -14,11 +14,13 @@ const state = {
     isDarkMode: localStorage.getItem('theme') === 'dark',
     currentUser: null,
     uploadStatus: null,
-    isUploading: false
+    isUploading: false,
+    isTrendOpen: false
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
 const isHiddenMatrixFloor = (floor) => HIDDEN_MATRIX_FLOORS.has(String(floor || '').toUpperCase().trim());
+let trendChart = null;
 
 // 初始主題檢查
 if (state.isDarkMode) {
@@ -59,13 +61,233 @@ const createLoadModeButton = () => `
         <i data-lucide="scale" class="w-3 h-3"></i> 荷重
     </button>`;
 
-const injectLoadModeButton = (headerHtml) => {
-    if (headerHtml.includes("displayMode', 'load'")) return headerHtml;
+const createTrendButton = () => `
+    <button onclick="window.app.openTrendModal()" class="flex items-center gap-1 px-3 py-1 rounded text-base transition-all bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-slate-700 font-bold">
+        <i data-lucide="line-chart" class="w-3.5 h-3.5"></i> 成長趨勢
+    </button>`;
 
-    return headerHtml.replace(
-        /(<button onclick="window\.app\.updateState\('displayMode', 'height'\)"[\s\S]*?<\/button>)/,
-        `$1${createLoadModeButton()}`
-    );
+const injectHeaderButtons = (headerHtml) => {
+    let nextHtml = headerHtml;
+    if (!nextHtml.includes("displayMode', 'load'")) {
+        nextHtml = nextHtml.replace(
+            /(<button onclick="window\.app\.updateState\('displayMode', 'height'\)"[\s\S]*?<\/button>)/,
+            `$1${createLoadModeButton()}`
+        );
+    }
+    if (!nextHtml.includes('openTrendModal')) {
+        nextHtml = nextHtml.replace(
+            /(<\/div>\s*<\/div>\s*<div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"><\/div>)/,
+            `${createTrendButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
+        );
+    }
+    return nextHtml;
+};
+
+const parseExpectedYear = (value) => {
+    const text = String(value || '').trim().toUpperCase();
+    if (!text) return null;
+    const match = text.match(/Y\s*(\d{1,4})/i) || text.match(/(\d{4})/);
+    if (!match) return null;
+    const num = Number(match[1]);
+    if (!Number.isFinite(num)) return null;
+    return num >= 1000 ? num : num;
+};
+
+const formatYearLabel = (year) => year === 0 ? '現況' : `Y${year}`;
+
+const buildAreaTrendData = () => {
+    const yearlyAdditions = new Map();
+    let baseClean = 0;
+    let baseProd = 0;
+
+    appData.processed.forEach(item => {
+        const year = parseExpectedYear(item.expectedCompletionYear);
+        const clean = Number(item.cleanRoomArea || 0);
+        const prod = Number(item.prodArea || 0);
+
+        if (year === null) {
+            baseClean += clean;
+            baseProd += prod;
+            return;
+        }
+
+        const current = yearlyAdditions.get(year) || { clean: 0, prod: 0 };
+        current.clean += clean;
+        current.prod += prod;
+        yearlyAdditions.set(year, current);
+    });
+
+    const years = Array.from(yearlyAdditions.keys()).sort((a, b) => a - b);
+    const labels = ['現況', ...years.map(formatYearLabel)];
+    const cleanValues = [baseClean];
+    const prodValues = [baseProd];
+    const additions = [{ year: 0, clean: baseClean, prod: baseProd }];
+
+    let runningClean = baseClean;
+    let runningProd = baseProd;
+
+    years.forEach(year => {
+        const add = yearlyAdditions.get(year) || { clean: 0, prod: 0 };
+        runningClean += add.clean;
+        runningProd += add.prod;
+        cleanValues.push(runningClean);
+        prodValues.push(runningProd);
+        additions.push({ year, clean: add.clean, prod: add.prod });
+    });
+
+    return { labels, cleanValues, prodValues, additions, baseClean, baseProd };
+};
+
+const renderTrendModal = () => {
+    if (!state.isTrendOpen) return '';
+    const trend = buildAreaTrendData();
+    const latestClean = trend.cleanValues[trend.cleanValues.length - 1] || 0;
+    const latestProd = trend.prodValues[trend.prodValues.length - 1] || 0;
+    const latestTotal = latestClean + latestProd;
+    const cleanDisplay = formatArea(latestClean, state.unit);
+    const prodDisplay = formatArea(latestProd, state.unit);
+    const totalDisplay = formatArea(latestTotal, state.unit);
+
+    return `
+        <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onclick="window.app.closeTrendModal()">
+            <section class="w-full max-w-6xl max-h-[90vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()">
+                <div class="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span>
+                            <h2 class="text-xl font-black text-slate-800 dark:text-slate-100">無塵室 & 生產週邊面積成長趨勢</h2>
+                        </div>
+                        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">依「預計成廠年份」累計；沒有年份的已成廠資料歸入現況基準。</p>
+                    </div>
+                    <button onclick="window.app.closeTrendModal()" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                        <i data-lucide="x" class="w-6 h-6"></i>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 pt-5">
+                    <div class="rounded-xl border border-sky-100 dark:border-sky-900/50 bg-sky-50 dark:bg-sky-950/30 p-4">
+                        <div class="text-sm font-bold text-sky-600 dark:text-sky-300">累計無塵室面積</div>
+                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${cleanDisplay.val}<span class="ml-1 text-sm text-slate-400">${cleanDisplay.unit}</span></div>
+                    </div>
+                    <div class="rounded-xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 p-4">
+                        <div class="text-sm font-bold text-emerald-600 dark:text-emerald-300">累計生產週邊面積</div>
+                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${prodDisplay.val}<span class="ml-1 text-sm text-slate-400">${prodDisplay.unit}</span></div>
+                    </div>
+                    <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
+                        <div class="text-sm font-bold text-slate-500 dark:text-slate-300">合計面積</div>
+                        <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${totalDisplay.val}<span class="ml-1 text-sm text-slate-400">${totalDisplay.unit}</span></div>
+                    </div>
+                </div>
+
+                <div class="px-6 py-5">
+                    <div class="h-[420px] rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
+                        <canvas id="area-trend-chart"></canvas>
+                    </div>
+                </div>
+
+                <div class="px-6 pb-6">
+                    <h3 class="mb-3 text-sm font-black text-slate-600 dark:text-slate-300">年度新增明細</h3>
+                    <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                        <table class="w-full text-sm">
+                            <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300">
+                                <tr>
+                                    <th class="px-4 py-2 text-left">年份</th>
+                                    <th class="px-4 py-2 text-right">新增無塵室</th>
+                                    <th class="px-4 py-2 text-right">新增生產週邊</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                                ${trend.additions.map(row => {
+                                    const clean = formatArea(row.clean, state.unit);
+                                    const prod = formatArea(row.prod, state.unit);
+                                    return `
+                                        <tr class="bg-white dark:bg-slate-900">
+                                            <td class="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">${formatYearLabel(row.year)}</td>
+                                            <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${clean.val} ${clean.unit}</td>
+                                            <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${prod.val} ${prod.unit}</td>
+                                        </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>`;
+};
+
+const drawTrendChart = () => {
+    if (!state.isTrendOpen) return;
+    const canvas = document.getElementById('area-trend-chart');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    if (trendChart) {
+        trendChart.destroy();
+        trendChart = null;
+    }
+
+    const trend = buildAreaTrendData();
+    const toUnitValue = (value) => state.unit === 'ping' ? value * 0.3025 : value;
+    const unitLabel = state.unit === 'ping' ? '坪' : 'm²';
+    const textColor = state.isDarkMode ? '#CBD5E1' : '#334155';
+    const gridColor = state.isDarkMode ? 'rgba(148,163,184,0.18)' : 'rgba(148,163,184,0.28)';
+
+    trendChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: trend.labels,
+            datasets: [
+                {
+                    label: `累計無塵室面積 (${unitLabel})`,
+                    data: trend.cleanValues.map(toUnitValue),
+                    borderColor: '#0EA5E9',
+                    backgroundColor: 'rgba(14, 165, 233, 0.12)',
+                    tension: 0.35,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: `累計生產週邊面積 (${unitLabel})`,
+                    data: trend.prodValues.map(toUnitValue),
+                    borderColor: '#10B981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.10)',
+                    tension: 0.35,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    labels: { color: textColor, font: { weight: 'bold' } }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.y).toLocaleString()} ${unitLabel}`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: textColor, font: { weight: 'bold' } },
+                    grid: { color: gridColor }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: textColor,
+                        callback: (value) => Number(value).toLocaleString()
+                    },
+                    grid: { color: gridColor }
+                }
+            }
+        }
+    });
 };
 
 const renderAdminUploadPanel = () => {
@@ -179,7 +401,7 @@ const render = () => {
         .filter(item => !item.isSummaryOnly)
         .forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
 
-    const headerHtml = injectLoadModeButton(renderHeader(state, allNames, totals, appData.processed));
+    const headerHtml = injectHeaderButtons(renderHeader(state, allNames, totals, appData.processed));
 
     app.innerHTML = `
         ${headerHtml}
@@ -188,9 +410,11 @@ const render = () => {
             ${renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)} 
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
+        ${renderTrendModal()}
     `;
 
     lucide.createIcons();
+    setTimeout(drawTrendChart, 0);
 
     const newScrollContainer = document.getElementById('matrix-scroll-container');
     if (newScrollContainer) {
@@ -213,6 +437,18 @@ window.app = {
             }
         }
         render(); 
+    },
+    openTrendModal: () => {
+        state.isTrendOpen = true;
+        render();
+    },
+    closeTrendModal: () => {
+        state.isTrendOpen = false;
+        if (trendChart) {
+            trendChart.destroy();
+            trendChart = null;
+        }
+        render();
     },
     selectZone: (id) => { 
         state.selectedZone = appData.processed.find(d => d.id === id); 
