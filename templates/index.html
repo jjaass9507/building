@@ -8,6 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <script>
         tailwind.config = {
@@ -38,8 +39,8 @@
         </div>
     </div>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=20260514-main"></script>
-    <script type="module" src="{{ url_for('static', filename='js/trend-overlay.js') }}?v=20260514-prod-area-export-v2"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=20260514-filter-expanded"></script>
+    <script type="module" src="{{ url_for('static', filename='js/trend-overlay.js') }}?v=20260514-xlsx-export-security-c"></script>
     <script type="module" src="{{ url_for('static', filename='js/utility-trend-admin.js') }}?v=20260514-utility-admin"></script>
 </body>
 </html>
