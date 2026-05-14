@@ -9,6 +9,7 @@ floor_columns_setting = {
     '棟別': '棟別',
     '樓層': '樓層',
     '狀態': '狀態',
+    '預計成廠年份': '預計成廠年份',
     '進駐製程': '進駐製程',
     '樓層高度(M)': '樓層高度(cm)',
     '無塵室淨高(M)': '無塵室淨高(cm)',
@@ -53,6 +54,7 @@ FACILITY_MAIN_KEY = '廠務設施面積(M2)'
 JOIN_KEY = '棟別'
 UNFINISHED_STATUS = '未成廠'
 UNKNOWN_FLOOR_LABEL = 'ALL'
+OPTIONAL_FLOOR_COLUMNS = {'預計成廠年份'}
 
 
 class DataProcessError(Exception):
@@ -189,10 +191,18 @@ def process_excel_file(input_path: str, cleaned_excel_path: str, json_output_pat
     df = df.replace(r'\n', '', regex=True)
 
     missing_floor = [col for col in floor_columns_setting.keys() if col not in df.columns]
-    critical_missing = [col for col in missing_floor if col not in facility_sub_columns]
+    critical_missing = [
+        col for col in missing_floor
+        if col not in facility_sub_columns and col not in OPTIONAL_FLOOR_COLUMNS
+    ]
 
     if critical_missing:
         raise DataProcessError(f"樓層設定錯誤：找不到必要欄位 {critical_missing}")
+
+    for optional_col in OPTIONAL_FLOOR_COLUMNS:
+        if optional_col not in df.columns:
+            df[optional_col] = ''
+            warnings.append(f"Excel 未包含選填欄位「{optional_col}」，已自動補空值。")
 
     for sub_col in facility_sub_columns:
         if sub_col not in df.columns:
