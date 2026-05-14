@@ -5,6 +5,8 @@ const toNumber = (value) => {
     return Number.isFinite(num) ? num : 0;
 };
 
+const isUnknownFloorSummary = (floorName) => String(floorName || '').toUpperCase().trim() === 'ALL';
+
 export const processRawData = (data) => {
     const tempFloors = new Set();
     const processedData = []; 
@@ -44,13 +46,20 @@ export const processRawData = (data) => {
             const rawStatus = f["狀態"];
             const floorStatus = (rawStatus && String(rawStatus).trim() === '未成廠') ? '未成廠' : '已成廠';
 
-            const fTotalArea = toNumber(f["樓地板面積(M2)"]);
+            const rawTotalArea = toNumber(f["樓地板面積(M2)"]);
             const fCleanArea = toNumber(f["無塵室面積(M2)"]);
             const fProdArea = toNumber(f["生產週邊(M2)"]);
             const fFacArea = f["廠務設施面積(M2)"] || 0;
             const fFacValue = (typeof fFacArea === 'object' && fFacArea !== null) ? toNumber(fFacArea.value) : toNumber(fFacArea);
             const fPubArea = toNumber(f["公設(含其他)(公式)(M2)"]);
             const fFloorLoad = toNumber(f["樓層載重kgf/m2"]);
+
+            // ALL 是樓層未定時的資料承載列。
+            // 若尚未有樓地板面積，但已填分類面積，外層單棟比例圖需要分母才能顯示。
+            const categoryAreaTotal = fCleanArea + fProdArea + fFacValue + fPubArea;
+            const fTotalArea = rawTotalArea > 0
+                ? rawTotalArea
+                : (isUnknownFloorSummary(fName) ? categoryAreaTotal : rawTotalArea);
 
             processedData.push({
                 id: `${bName}-${fName}`,
