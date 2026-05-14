@@ -3,12 +3,12 @@ import { formatArea } from './utils.js';
 
 const METRICS = {
   clean: { key: 'clean', type: 'area', label: '無塵室面積', annualLabel: '年增無塵室面積', cumulativeLabel: '累積無塵室面積', color: '#0EA5E9', bg: 'rgba(14,165,233,.18)', card: 'bg-sky-50 dark:bg-sky-950/30 border-sky-100 dark:border-sky-900/50 text-sky-600 dark:text-sky-300' },
-  prod: { key: 'prod', type: 'area', label: '生產週邊面積', annualLabel: '年增生產週邊面積', cumulativeLabel: '累積生產週邊面積', color: '#10B981', bg: 'rgba(16,185,129,.18)', card: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-300' },
+  production_area: { key: 'production_area', type: 'area', label: '生產面積', annualLabel: '年增生產面積', cumulativeLabel: '累積生產面積', color: '#10B981', bg: 'rgba(16,185,129,.18)', card: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-900/50 text-emerald-600 dark:text-emerald-300' },
   power_demand: { key: 'power_demand', type: 'utility', label: '電力需求', annualLabel: '年增電力需求', cumulativeLabel: '累積電力需求', unit: 'kW', color: '#F59E0B', bg: 'rgba(245,158,11,.18)', card: 'bg-amber-50 dark:bg-amber-950/30 border-amber-100 dark:border-amber-900/50 text-amber-600 dark:text-amber-300' },
   water_demand: { key: 'water_demand', type: 'utility', label: '用水需求', annualLabel: '年增用水需求', cumulativeLabel: '累積用水需求', unit: 'CMD', color: '#6366F1', bg: 'rgba(99,102,241,.18)', card: 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-100 dark:border-indigo-900/50 text-indigo-600 dark:text-indigo-300' }
 };
 
-let selected = ['clean', 'prod', 'power_demand', 'water_demand'];
+let selected = ['clean', 'production_area', 'power_demand', 'water_demand'];
 let charts = {};
 let trendCache = null;
 
@@ -19,14 +19,13 @@ const parseYear = (value) => {
   const year = match ? Number(match[1]) : null;
   return Number.isFinite(year) ? year : null;
 };
-const yearLabel = (year) => year === 0 || year === 'current' ? '現況' : `Y${year}`;
 const formatRate = (rate) => rate === null || rate === undefined || !Number.isFinite(rate) ? '-' : `${(rate * 100).toFixed(1)}%`;
 const toPing = (value) => value * 0.3025;
-const fmt = (value, metric) => {
-  if (metric.type === 'area') return formatArea(value, 'ping');
-  return { val: Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }), unit: metric.unit || '' };
-};
-const chartValue = (value, metric) => metric.type === 'area' ? toPing(value) : Number(value || 0);
+const fmt = (value, metric) => metric.type === 'area'
+  ? formatArea(value, 'ping')
+  : { val: Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }), unit: metric.unit || '' };
+const rawValue = (value, metric) => metric.type === 'area' ? toPing(value) : Number(value || 0);
+const chartValue = rawValue;
 
 async function fetchJson(url, fallback) {
   try {
@@ -38,36 +37,49 @@ async function fetchJson(url, fallback) {
   }
 }
 
+function makeSeries(rows) {
+  return {
+    labels: rows.map(row => row.label),
+    annual: rows.map(row => row.annual),
+    rates: rows.map(row => row.rate),
+    cumulative: rows.map(row => row.cumulative),
+    rows
+  };
+}
+
 function buildAreaTrend(rawData) {
   const { processedData } = processRawData(rawData || []);
-  const base = { clean: 0, prod: 0 };
+  const base = { clean: 0, production_area: 0 };
   const yearlyAdditions = new Map();
 
   processedData.forEach((item) => {
     const year = parseYear(item.expectedCompletionYear);
     const clean = Number(item.cleanRoomArea || 0);
-    const prod = Number(item.prodArea || 0);
+    const prodAround = Number(item.prodArea || 0);
+    const productionArea = clean + prodAround;
+
     if (item.status !== '未成廠' || year === null) {
       base.clean += clean;
-      base.prod += prod;
+      base.production_area += productionArea;
       return;
     }
-    const current = yearlyAdditions.get(year) || { clean: 0, prod: 0 };
+
+    const current = yearlyAdditions.get(year) || { clean: 0, production_area: 0 };
     current.clean += clean;
-    current.prod += prod;
+    current.production_area += productionArea;
     yearlyAdditions.set(year, current);
   });
 
   const years = Array.from(yearlyAdditions.keys()).sort((a, b) => a - b);
   const result = {};
-  ['clean', 'prod'].forEach((key) => {
+  ['clean', 'production_area'].forEach((key) => {
     let running = base[key] || 0;
     const rows = [{ year: 0, label: '現況', annual: 0, rate: null, cumulative: running }];
     years.forEach((year) => {
       const add = yearlyAdditions.get(year)?.[key] || 0;
       const rate = running > 0 ? add / running : null;
       running += add;
-      rows.push({ year, label: yearLabel(year), annual: add, rate, cumulative: running });
+      rows.push({ year, label: `Y${year}`, annual: add, rate, cumulative: running });
     });
     result[key] = makeSeries(rows);
   });
@@ -107,16 +119,6 @@ function buildUtilityTrend(utilityData) {
   return result;
 }
 
-function makeSeries(rows) {
-  return {
-    labels: rows.map(row => row.label),
-    annual: rows.map(row => row.annual),
-    rates: rows.map(row => row.rate),
-    cumulative: rows.map(row => row.cumulative),
-    rows
-  };
-}
-
 async function buildTrendData() {
   if (trendCache) return trendCache;
   const [rawData, utilityData] = await Promise.all([
@@ -140,20 +142,7 @@ function renderChartSection(metric, trend) {
   if (!data) return '';
   const latest = fmt(data.cumulative.at(-1) || 0, metric);
   const latestAnnual = fmt(data.annual.at(-1) || 0, metric);
-  return `
-    <section class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-3">
-      <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-2 mb-2">
-        <div>
-          <div class="flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-lg border ${metric.card}"><i data-lucide="bar-chart-3" class="w-4 h-4"></i></span><h3 class="text-base font-black text-slate-700 dark:text-slate-100">${metric.label}</h3></div>
-          <p class="mt-1 text-xs font-bold text-slate-400">同一張圖表內呈現「累積趨勢折線」與「年增變化柱狀」，現況只作為累積基準。</p>
-        </div>
-        <div class="grid grid-cols-2 gap-2 min-w-[280px]">
-          <div class="rounded-lg border p-2 ${metric.card}"><div class="text-xs font-bold">${metric.cumulativeLabel}</div><div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latest.val}<span class="ml-1 text-xs text-slate-400">${latest.unit}</span></div></div>
-          <div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-2"><div class="text-xs font-bold text-slate-500 dark:text-slate-300">最後年度新增</div><div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latestAnnual.val}<span class="ml-1 text-xs text-slate-400">${latestAnnual.unit}</span></div><div class="text-[11px] font-bold text-slate-400">年增率：${formatRate(data.rates.at(-1))}</div></div>
-        </div>
-      </div>
-      <div class="h-[320px]"><canvas id="trend-chart-${metric.key}"></canvas></div>
-    </section>`;
+  return `<section class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-3"><div class="flex flex-col xl:flex-row xl:items-start justify-between gap-2 mb-2"><div><div class="flex items-center gap-2"><span class="inline-flex h-7 w-7 items-center justify-center rounded-lg border ${metric.card}"><i data-lucide="bar-chart-3" class="w-4 h-4"></i></span><h3 class="text-base font-black text-slate-700 dark:text-slate-100">${metric.label}</h3></div><p class="mt-1 text-xs font-bold text-slate-400">同一張圖表內呈現「累積趨勢折線」與「年增變化柱狀」，現況只作為累積基準。</p></div><div class="grid grid-cols-2 gap-2 min-w-[280px]"><div class="rounded-lg border p-2 ${metric.card}"><div class="text-xs font-bold">${metric.cumulativeLabel}</div><div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latest.val}<span class="ml-1 text-xs text-slate-400">${latest.unit}</span></div></div><div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-2"><div class="text-xs font-bold text-slate-500 dark:text-slate-300">最後年度新增</div><div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latestAnnual.val}<span class="ml-1 text-xs text-slate-400">${latestAnnual.unit}</span></div><div class="text-[11px] font-bold text-slate-400">年增率：${formatRate(data.rates.at(-1))}</div></div></div></div><div class="h-[320px]"><canvas id="trend-chart-${metric.key}"></canvas></div></section>`;
 }
 
 function renderTables(trend) {
@@ -164,18 +153,55 @@ function renderTables(trend) {
   }).join('')}</div></section>`;
 }
 
+function escapeExcel(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function exportSelectedTrends(trend) {
+  const rows = [];
+  selected.forEach((key) => {
+    const metric = METRICS[key];
+    const data = trend.metrics[key];
+    if (!data) return;
+    data.rows.forEach((row) => {
+      rows.push({
+        指標: metric.label,
+        年份: row.label,
+        單位: metric.type === 'area' ? '坪' : metric.unit,
+        年度新增: rawValue(row.annual, metric),
+        年增比例: row.rate == null ? '' : `${(row.rate * 100).toFixed(1)}%`,
+        累積總量: rawValue(row.cumulative, metric)
+      });
+    });
+  });
+  if (!rows.length) { alert('請至少選取一個要匯出的指標。'); return; }
+
+  const tableRows = rows.map((row) => `<tr><td>${escapeExcel(row.指標)}</td><td>${escapeExcel(row.年份)}</td><td>${escapeExcel(row.單位)}</td><td>${row.年度新增}</td><td>${escapeExcel(row.年增比例)}</td><td>${row.累積總量}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><table border="1"><thead><tr><th>指標</th><th>年份</th><th>單位</th><th>年度新增</th><th>年增比例</th><th>累積總量</th></tr></thead><tbody>${tableRows}</tbody></table></body></html>`;
+  const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `成長趨勢資料_${date}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+}
+
 async function openTrendOverlay() {
   const trend = await buildTrendData();
   destroyCharts();
   document.getElementById('trend-overlay-v2')?.remove();
-  const totalArea = fmt((trend.metrics.clean?.cumulative.at(-1) || 0) + (trend.metrics.prod?.cumulative.at(-1) || 0), METRICS.clean);
+  const productionArea = fmt(trend.metrics.production_area?.cumulative.at(-1) || 0, METRICS.production_area);
   const overlay = document.createElement('div');
   overlay.id = 'trend-overlay-v2';
   overlay.className = 'fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4';
-  overlay.innerHTML = `<section class="w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()"><div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4"><div><div class="flex items-center gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span><h2 class="text-xl font-black text-slate-800 dark:text-slate-100">成長趨勢</h2></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">可同時檢視面積、電力需求與用水需求；現況只作為累積基準，不列入年度新增。</p></div><div class="flex flex-wrap items-center gap-2">${Object.values(METRICS).map(renderMetricButton).join('')}<button id="trend-close-v2" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button></div></div><div class="px-6 pt-4"><div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block"><div class="text-sm font-bold text-slate-500 dark:text-slate-300">無塵室 + 生產週邊合計</div><div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${totalArea.val}<span class="ml-1 text-sm text-slate-400">${totalArea.unit}</span></div></div></div><div class="px-6 py-4 space-y-3">${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個指標</div>'}${renderTables(trend)}</div></section>`;
+  overlay.innerHTML = `<section class="w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()"><div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4"><div><div class="flex items-center gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span><h2 class="text-xl font-black text-slate-800 dark:text-slate-100">成長趨勢</h2></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">生產面積 = 無塵室面積 + 生產週邊面積；可匯出目前勾選的趨勢資料。</p></div><div class="flex flex-wrap items-center gap-2">${Object.values(METRICS).map(renderMetricButton).join('')}<button id="trend-export-v2" class="px-3 py-2 rounded-xl text-sm font-black bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"><i data-lucide="download" class="inline-block w-4 h-4 mr-1"></i>匯出Excel</button><button id="trend-close-v2" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button></div></div><div class="px-6 pt-4"><div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block"><div class="text-sm font-bold text-slate-500 dark:text-slate-300">生產面積合計</div><div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${productionArea.val}<span class="ml-1 text-sm text-slate-400">${productionArea.unit}</span></div><div class="mt-1 text-xs font-bold text-slate-400">無塵室面積 + 生產週邊面積</div></div></div><div class="px-6 py-4 space-y-3">${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個指標</div>'}${renderTables(trend)}</div></section>`;
   overlay.addEventListener('click', closeTrendOverlay);
   document.body.appendChild(overlay);
   document.getElementById('trend-close-v2')?.addEventListener('click', closeTrendOverlay);
+  document.getElementById('trend-export-v2')?.addEventListener('click', (event) => { event.stopPropagation(); exportSelectedTrends(trend); });
   document.querySelectorAll('[data-trend-metric]').forEach((button) => button.addEventListener('click', async (event) => { event.stopPropagation(); const key = button.getAttribute('data-trend-metric'); selected = selected.includes(key) ? selected.filter((item) => item !== key) : [...selected, key]; await openTrendOverlay(); }));
   lucide?.createIcons?.();
   drawCharts(trend);
