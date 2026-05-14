@@ -18,6 +18,7 @@ const state = {
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
+const isHiddenMatrixFloor = (floor) => HIDDEN_MATRIX_FLOORS.has(String(floor || '').toUpperCase().trim());
 
 // 初始主題檢查
 if (state.isDarkMode) {
@@ -131,10 +132,10 @@ const render = () => {
 
     const app = document.getElementById('app');
 
-    // 計算總計邏輯
+    // 計算總計邏輯：ALL 是資料承載列，不顯示在樓層，但外層加總仍要納入。
     const dataForTotal = state.includeUnfinished 
         ? appData.processed 
-        : appData.processed.filter(d => d.status !== '未成廠');
+        : appData.processed.filter(d => d.status !== '未成廠' || isHiddenMatrixFloor(d.floor));
 
     const totalArea = dataForTotal.reduce((acc, curr) => acc + (curr.area || 0), 0);
     const totalClean = dataForTotal.reduce((acc, curr) => acc + (curr.cleanRoomArea || 0), 0);
@@ -150,12 +151,12 @@ const render = () => {
     const presentFloors = new Set();
     activeBuildings.forEach(bldg => {
         appData.processed
-            .filter(d => d.building === bldg && !HIDDEN_MATRIX_FLOORS.has(String(d.floor || '').toUpperCase().trim()))
+            .filter(d => d.building === bldg && !isHiddenMatrixFloor(d.floor))
             .forEach(d => presentFloors.add(d.floor));
     });
     const activeFloors = appData.sortedFloors.filter(f => (
         presentFloors.has(f)
-        && !HIDDEN_MATRIX_FLOORS.has(String(f || '').toUpperCase().trim())
+        && !isHiddenMatrixFloor(f)
     ));
 
     // 注意：ALL 只從樓層列隱藏，不從矩陣資料移除。
