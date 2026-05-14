@@ -159,17 +159,25 @@ const render = () => {
         && !isHiddenMatrixFloor(f)
     ));
 
-    // 注意：ALL 只從樓層列隱藏，不從矩陣資料移除。
-    // renderMatrix 會用這份完整資料計算各棟上方加總，因此未成廠 ALL 仍會納入該棟加總。
+    // ALL 是資料承載列，不應顯示在樓層，但必須參與單一棟別表頭的全棟比例圖計算。
+    // 這裡轉成內部 summary-only floor，避免元件內部或 dataMap 把 floor=ALL 當成一般樓層處理。
+    const summaryMatrixRows = appData.processed.map(item => (
+        isHiddenMatrixFloor(item.floor)
+            ? { ...item, floor: '__BUILDING_SUMMARY__', isSummaryOnly: true }
+            : item
+    ));
+
     const matrixData = state.displayMode === 'load'
-        ? appData.processed.map(item => ({
+        ? summaryMatrixRows.map(item => ({
             ...item,
             usageLabel: formatFloorLoadCell(item.floorLoad)
         }))
-        : appData.processed;
+        : summaryMatrixRows;
 
     const dataMap = {};
-    matrixData.forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
+    matrixData
+        .filter(item => !item.isSummaryOnly)
+        .forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
 
     const headerHtml = injectLoadModeButton(renderHeader(state, allNames, totals, appData.processed));
 
