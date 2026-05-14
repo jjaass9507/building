@@ -24,7 +24,7 @@
         }
     </script>
     
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260514-prod-trend-export">
 </head>
 
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans flex flex-col min-h-screen overflow-hidden transition-colors duration-300">
@@ -38,8 +38,8 @@
         </div>
     </div>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='js/trend-overlay.js') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='js/utility-trend-admin.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=20260514-main"></script>
+    <script type="module" src="{{ url_for('static', filename='js/trend-overlay.js') }}?v=20260514-prod-area-export-v2"></script>
+    <script type="module" src="{{ url_for('static', filename='js/utility-trend-admin.js') }}?v=20260514-utility-admin"></script>
 </body>
 </html>
