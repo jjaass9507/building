@@ -424,6 +424,118 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
         </div>`;
 };
 
+// 3b. 渲染面積比較表 (廠棟總覽，可展開至樓層明細)
+export const renderCompareTable = (state, activeBuildings, processedData, buildingMeta, sortedFloors) => {
+    const { unit, compareMode, compareExpanded } = state;
+    const { COLORS } = STYLE_CONFIG;
+    const sortedActive = sortBuildings(activeBuildings);
+    const isAllFloor = (floor) => String(floor || '').toUpperCase().trim() === 'ALL';
+    const unitLabel = unit === 'ping' ? '坪' : 'm²';
+
+    const sumFor = (zones, key) => zones.reduce((acc, z) => acc + getVal(z[key]), 0);
+
+    const metricCell = (value, totalArea, cls) => {
+        if (compareMode === 'pct') {
+            const pct = totalArea > 0 ? Math.round((value / totalArea) * 100) : 0;
+            return `<span class="font-mono ${cls}">${pct}%</span>`;
+        }
+        return `<span class="font-mono ${cls}">${formatArea(value, unit).val}</span>`;
+    };
+
+    const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, onToggle = '', emphasize = false } = {}) => {
+        const totalArea = sumFor(zones, 'area');
+        const rowBg = indent > 0
+            ? 'bg-slate-50/70 dark:bg-slate-800/30'
+            : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60';
+        const labelCls = emphasize
+            ? 'font-black text-slate-800 dark:text-slate-100'
+            : indent > 0
+                ? 'font-medium text-slate-500 dark:text-slate-400'
+                : 'font-bold text-slate-700 dark:text-slate-200';
+
+        return `
+            <tr class="${rowBg} border-b border-slate-100 dark:border-slate-800 transition-colors">
+                <td class="px-4 py-2.5">
+                    <div class="flex items-center gap-1.5" style="padding-left: ${indent * 1.75}rem">
+                        ${expandable
+                            ? `<button onclick="${onToggle}" class="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"><i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}" class="w-4 h-4 text-slate-400"></i></button>`
+                            : `<span class="w-5 shrink-0 inline-block"></span>`}
+                        <span class="${labelCls}">${label}</span>
+                    </div>
+                </td>
+                <td class="px-4 py-2.5 text-right font-mono text-slate-500 dark:text-slate-400">${baseArea !== null ? formatArea(baseArea, unit).val : '-'}</td>
+                <td class="px-4 py-2.5 text-right font-mono ${emphasize ? 'font-black text-slate-800 dark:text-white' : 'font-bold text-slate-700 dark:text-slate-200'}">${formatArea(totalArea, unit).val}</td>
+                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'cleanRoomArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
+                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'prodArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
+                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'facArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
+                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'pubArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
+            </tr>`;
+    };
+
+    const allZones = processedData.filter(d => sortedActive.includes(d.building));
+    const totalBaseArea = sortedActive.reduce((acc, b) => acc + Number(buildingMeta[b]?.baseArea || 0), 0);
+
+    const summaryRow = renderRow('全廠棟', allZones, { baseArea: totalBaseArea, emphasize: true });
+
+    const buildingRows = sortedActive.map(bldg => {
+        const meta = buildingMeta[bldg] || {};
+        const bZones = allZones.filter(d => d.building === bldg);
+        const isExpanded = compareExpanded.includes(bldg);
+        const bRow = renderRow(bldg, bZones, {
+            baseArea: meta.baseArea,
+            indent: 1,
+            expandable: true,
+            expanded: isExpanded,
+            onToggle: `window.app.toggleCompareExpand('${bldg}')`
+        });
+
+        if (!isExpanded) return bRow;
+
+        const buildingFloors = (sortedFloors || []).filter(f => !isAllFloor(f) && bZones.some(z => z.floor === f));
+        const floorRows = buildingFloors.map(floor => {
+            const fZones = bZones.filter(z => z.floor === floor);
+            return renderRow(floor, fZones, { indent: 2 });
+        }).join('');
+
+        return bRow + floorRows;
+    }).join('');
+
+    return `
+        <div class="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950 rounded-xl shadow-inner border border-slate-200 dark:border-slate-800 transition-colors flex flex-col">
+            <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-20">
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2 text-sm font-black text-slate-700 dark:text-slate-200">
+                        <i data-lucide="table-2" class="w-4 h-4 text-slate-400"></i> 面積比較表
+                    </div>
+                    <span class="text-xs font-bold text-slate-400">單位：${unitLabel}｜點擊廠棟列可展開樓層明細</span>
+                </div>
+                <div class="flex gap-0.5 bg-slate-100 dark:bg-slate-800 p-0.5 rounded-md">
+                    <button onclick="window.app.updateState('compareMode', 'value')" class="px-3 py-1 text-sm rounded transition-all ${compareMode !== 'pct' ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}">實際數值</button>
+                    <button onclick="window.app.updateState('compareMode', 'pct')" class="px-3 py-1 text-sm rounded transition-all ${compareMode === 'pct' ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}">佔比</button>
+                </div>
+            </div>
+            <div class="overflow-auto flex-1">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300 sticky top-0 z-10">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-black uppercase tracking-wider">廠棟 / 樓層</th>
+                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider">基地面積</th>
+                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider">樓地板面積</th>
+                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.CLEAN}"></span>無塵室面積</span></th>
+                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.PROD}"></span>生產周邊</span></th>
+                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.FAC}"></span>廠務設施面積</span></th>
+                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.PUB}"></span>公設(含其他)</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${summaryRow}
+                        ${buildingRows}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+};
+
 // 4. 渲染詳情面板
 export const renderPanel = (state, buildingMeta, processedData) => {
     const { selectedBuilding, selectedZone, unit } = state;
