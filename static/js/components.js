@@ -425,69 +425,84 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
 };
 
 // 3b. 渲染面積比較表 (廠棟總覽，可展開至樓層明細)
+const COMPARE_METRICS = [
+    { key: 'cleanRoomArea', label: '無塵室', color: STYLE_CONFIG.COLORS.CLEAN },
+    { key: 'prodArea', label: '生產周邊', color: STYLE_CONFIG.COLORS.PROD },
+    { key: 'facArea', label: '廠務設施', color: STYLE_CONFIG.COLORS.FAC },
+    { key: 'pubArea', label: '公設(其他)', color: STYLE_CONFIG.COLORS.PUB }
+];
+
 export const renderCompareTable = (state, activeBuildings, processedData, buildingMeta, sortedFloors) => {
     const { unit, compareMode, compareExpanded } = state;
-    const { COLORS } = STYLE_CONFIG;
     const sortedActive = sortBuildings(activeBuildings);
     const isAllFloor = (floor) => String(floor || '').toUpperCase().trim() === 'ALL';
     const unitLabel = unit === 'ping' ? '坪' : 'm²';
 
     const sumFor = (zones, key) => zones.reduce((acc, z) => acc + getVal(z[key]), 0);
 
-    const metricCell = (value, totalArea, cls) => {
-        if (compareMode === 'pct') {
-            const pct = totalArea > 0 ? Math.round((value / totalArea) * 100) : 0;
-            return `<span class="font-mono ${cls}">${pct}%</span>`;
-        }
-        return `<span class="font-mono ${cls}">${formatArea(value, unit).val}</span>`;
-    };
-
-    const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, onToggle = '', emphasize = false } = {}) => {
-        const totalArea = sumFor(zones, 'area');
-        const rowBg = indent > 0
-            ? 'bg-slate-50/70 dark:bg-slate-800/30'
-            : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60';
-        const labelCls = emphasize
-            ? 'font-black text-slate-800 dark:text-slate-100'
-            : indent > 0
-                ? 'font-medium text-slate-500 dark:text-slate-400'
-                : 'font-bold text-slate-700 dark:text-slate-200';
+    // 每一個「份額」欄位：數字 (依模式顯示絕對值或佔比) + 底下一條依實際佔比繪製的刻度條
+    const renderMetricCell = (value, totalArea, color, isTotalRow) => {
+        const pct = totalArea > 0 ? (value / totalArea) * 100 : 0;
+        const pctRounded = Math.round(pct);
+        const display = compareMode === 'pct' ? `${pctRounded}%` : formatArea(value, unit).val;
+        const numCls = isTotalRow ? 'font-bold text-slate-800 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300';
 
         return `
-            <tr class="${rowBg} border-b border-slate-100 dark:border-slate-800 transition-colors">
-                <td class="px-4 py-2.5">
-                    <div class="flex items-center gap-1.5" style="padding-left: ${indent * 1.75}rem">
+            <td class="px-3 py-2 align-middle border-l border-slate-100 dark:border-slate-800/70">
+                <div class="flex flex-col items-end gap-1">
+                    <span class="font-mono tabular-nums text-[13px] ${numCls}">${display}</span>
+                    <span class="h-[3px] w-12 bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
+                        <span class="absolute inset-y-0 left-0 ${color}" style="width: ${Math.min(pct, 100)}%"></span>
+                    </span>
+                </div>
+            </td>`;
+    };
+
+    const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, isTotalRow = false } = {}) => {
+        const totalArea = sumFor(zones, 'area');
+        const rowCls = isTotalRow
+            ? 'bg-slate-100/80 dark:bg-slate-800/60 border-b-2 border-slate-300 dark:border-slate-700'
+            : indent > 0
+                ? 'bg-slate-50/60 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/70 hover:bg-slate-100/70 dark:hover:bg-slate-800/40'
+                : 'bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/70 hover:bg-slate-50 dark:hover:bg-slate-800/50';
+        const clickable = expandable ? `onclick="window.app.toggleCompareExpand('${label}')" class="cursor-pointer"` : '';
+
+        const labelHtml = indent > 0
+            ? `<span class="inline-flex items-center border-l border-slate-300 dark:border-slate-700 pl-2 font-mono text-[13px] text-slate-500 dark:text-slate-400">${label}</span>`
+            : isTotalRow
+                ? `<span class="text-[13px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200">${label}</span>`
+                : `<span class="text-sm font-bold text-slate-800 dark:text-slate-100">${label}</span>`;
+
+        return `
+            <tr class="${rowCls} transition-colors" ${clickable}>
+                <td class="px-3 py-2 align-middle ${isTotalRow ? 'border-l-[3px] border-l-blue-600 dark:border-l-blue-500' : ''}">
+                    <div class="flex items-center gap-1.5" style="padding-left: ${indent * 1.25}rem">
                         ${expandable
-                            ? `<button onclick="${onToggle}" class="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"><i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}" class="w-4 h-4 text-slate-400"></i></button>`
-                            : `<span class="w-5 shrink-0 inline-block"></span>`}
-                        <span class="${labelCls}">${label}</span>
+                            ? `<i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i>`
+                            : `<span class="w-3.5 shrink-0 inline-block"></span>`}
+                        ${labelHtml}
                     </div>
                 </td>
-                <td class="px-4 py-2.5 text-right font-mono text-slate-500 dark:text-slate-400">${baseArea !== null ? formatArea(baseArea, unit).val : '-'}</td>
-                <td class="px-4 py-2.5 text-right font-mono ${emphasize ? 'font-black text-slate-800 dark:text-white' : 'font-bold text-slate-700 dark:text-slate-200'}">${formatArea(totalArea, unit).val}</td>
-                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'cleanRoomArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
-                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'prodArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
-                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'facArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
-                <td class="px-4 py-2.5 text-right">${metricCell(sumFor(zones, 'pubArea'), totalArea, 'text-slate-700 dark:text-slate-200')}</td>
+                <td class="px-3 py-2 text-right align-middle border-l border-slate-100 dark:border-slate-800/70">
+                    <span class="font-mono tabular-nums text-[13px] text-slate-400 dark:text-slate-500">${baseArea !== null ? formatArea(baseArea, unit).val : '—'}</span>
+                </td>
+                <td class="px-3 py-2 text-right align-middle border-l border-slate-100 dark:border-slate-800/70">
+                    <span class="font-mono tabular-nums text-sm ${isTotalRow ? 'font-bold text-slate-800 dark:text-white' : 'font-semibold text-slate-700 dark:text-slate-200'}">${formatArea(totalArea, unit).val}</span>
+                </td>
+                ${COMPARE_METRICS.map(m => renderMetricCell(sumFor(zones, m.key), totalArea, m.color, isTotalRow)).join('')}
             </tr>`;
     };
 
     const allZones = processedData.filter(d => sortedActive.includes(d.building));
     const totalBaseArea = sortedActive.reduce((acc, b) => acc + Number(buildingMeta[b]?.baseArea || 0), 0);
 
-    const summaryRow = renderRow('全廠棟', allZones, { baseArea: totalBaseArea, emphasize: true });
+    const summaryRow = renderRow('全廠棟', allZones, { baseArea: totalBaseArea, isTotalRow: true });
 
     const buildingRows = sortedActive.map(bldg => {
         const meta = buildingMeta[bldg] || {};
         const bZones = allZones.filter(d => d.building === bldg);
         const isExpanded = compareExpanded.includes(bldg);
-        const bRow = renderRow(bldg, bZones, {
-            baseArea: meta.baseArea,
-            indent: 1,
-            expandable: true,
-            expanded: isExpanded,
-            onToggle: `window.app.toggleCompareExpand('${bldg}')`
-        });
+        const bRow = renderRow(bldg, bZones, { baseArea: meta.baseArea, indent: 1, expandable: true, expanded: isExpanded });
 
         if (!isExpanded) return bRow;
 
@@ -500,31 +515,34 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
         return bRow + floorRows;
     }).join('');
 
+    const modeBtn = (mode, label) => `
+        <button onclick="window.app.updateState('compareMode', '${mode}')" class="px-2.5 py-1 text-[13px] font-bold rounded-sm transition-colors ${compareMode === mode ? 'bg-slate-700 dark:bg-blue-600 text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}">${label}</button>`;
+
     return `
-        <div class="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950 rounded-xl shadow-inner border border-slate-200 dark:border-slate-800 transition-colors flex flex-col">
-            <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-20">
-                <div class="flex items-center gap-3">
-                    <div class="flex items-center gap-2 text-sm font-black text-slate-700 dark:text-slate-200">
+        <div class="flex-1 overflow-auto bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-800 transition-colors flex flex-col">
+            <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 sticky top-0 z-20">
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                         <i data-lucide="table-2" class="w-4 h-4 text-slate-400"></i> 面積比較表
                     </div>
-                    <span class="text-xs font-bold text-slate-400">單位：${unitLabel}｜點擊廠棟列可展開樓層明細</span>
+                    <span class="text-xs text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 點擊廠棟列展開樓層明細</span>
                 </div>
-                <div class="flex gap-0.5 bg-slate-100 dark:bg-slate-800 p-0.5 rounded-md">
-                    <button onclick="window.app.updateState('compareMode', 'value')" class="px-3 py-1 text-sm rounded transition-all ${compareMode !== 'pct' ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}">實際數值</button>
-                    <button onclick="window.app.updateState('compareMode', 'pct')" class="px-3 py-1 text-sm rounded transition-all ${compareMode === 'pct' ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}">佔比</button>
+                <div class="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-sm p-0.5">
+                    ${modeBtn('value', '實際數值')}
+                    ${modeBtn('pct', '佔比')}
                 </div>
             </div>
             <div class="overflow-auto flex-1">
-                <table class="w-full text-sm">
-                    <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300 sticky top-0 z-10">
+                <table class="w-full border-collapse">
+                    <thead class="bg-slate-100 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400 sticky top-0 z-10 border-b-2 border-slate-300 dark:border-slate-700">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-black uppercase tracking-wider">廠棟 / 樓層</th>
-                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider">基地面積</th>
-                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider">樓地板面積</th>
-                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.CLEAN}"></span>無塵室面積</span></th>
-                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.PROD}"></span>生產周邊</span></th>
-                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.FAC}"></span>廠務設施面積</span></th>
-                            <th class="px-4 py-3 text-right text-xs font-black uppercase tracking-wider"><span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${COLORS.PUB}"></span>公設(含其他)</span></th>
+                            <th class="px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider">廠棟 / 樓層</th>
+                            <th class="px-3 py-2 text-right text-[11px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">基地面積</th>
+                            <th class="px-3 py-2 text-right text-[11px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">樓地板面積</th>
+                            ${COMPARE_METRICS.map(m => `
+                                <th class="px-3 py-2 text-right text-[11px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">
+                                    <span class="inline-flex items-center justify-end gap-1.5"><span class="w-2 h-2 ${m.color}"></span>${m.label}</span>
+                                </th>`).join('')}
                         </tr>
                     </thead>
                     <tbody>
