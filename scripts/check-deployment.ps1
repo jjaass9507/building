@@ -96,6 +96,40 @@ function Add-Result {
     }
 }
 
+function Invoke-Native {
+    <#
+        執行原生 exe 並完整取回 stdout+stderr 與 ExitCode。
+
+        重要：這裡刻意把 $ErrorActionPreference 暫時切成 'Continue' 再呼叫。
+        原因是在 $ErrorActionPreference = 'Stop' 之下，把原生程式的 stderr
+        用 2>&1 併進來時，PowerShell 會把每一行 stderr 包成 ErrorRecord，
+        且 'Stop' 會讓它們變成 terminating error 直接中斷、只留下第一行
+        訊息（例如只看到 "Python path configuration:" 就斷了，看不到完整
+        的 Fatal Python error 內容），導致抓不到真正的錯誤原因。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string[]]$ArgumentList
+    )
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $FilePath @ArgumentList 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $output = $_.Exception.Message
+        $exitCode = -1
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+
+    [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = $output.Trim()
+    }
+}
+
 function Test-WritablePath {
     param([string]$Path)
     try {
@@ -182,44 +216,68 @@ if ($wfastcgiPy) {
     }
 }
 
-# 4. Python 版本
+# 4. Python 是否能正常啟動 / 版本
+$pythonUsable = $false
 if ($pythonExe -and (Test-Path $pythonExe)) {
-    try {
-        $verOutput = & $pythonExe --version 2>&1
-        if ($verOutput -match '(\d+)\.(\d+)\.(\d+)') {
-            $major = [int]$Matches[1]; $minor = [int]$Matches[2]
-            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
-                Add-Result -Status PASS -Check "Python 版本 >= 3.11" -Detail $verOutput
-            } else {
-                Add-Result -Status WARN -Check "Python 版本 >= 3.11" -Detail "偵測到 $verOutput，建議 3.11 以上"
-            }
+    $verResult = Invoke-Native -FilePath $pythonExe -ArgumentList @('--version')
+
+    if ($verResult.ExitCode -eq 0 -and $verResult.Output -match '(\d+)\.(\d+)\.(\d+)') {
+        $pythonUsable = $true
+        $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
+            Add-Result -Status PASS -Check "Python 版本 >= 3.11" -Detail $verResult.Output
         } else {
-            Add-Result -Status WARN -Check "Python 版本 >= 3.11" -Detail "無法解析版本輸出：$verOutput"
+            Add-Result -Status WARN -Check "Python 版本 >= 3.11" -Detail "偵測到 $($verResult.Output)，建議 3.11 以上"
         }
-    } catch {
-        Add-Result -Status FAIL -Check "Python 可執行" -Detail $_.Exception.Message
+    } else {
+        # python.exe 本身就啟動失敗（例如 embeddable/portable 版本的
+        # stdlib 路徑跑掉，或 PYTHONHOME/PYTHONPATH 環境變數衝突）。
+        # 這裡把完整診斷資訊印出來，而不是只給第一行錯誤。
+        $diagLines = New-Object System.Collections.Generic.List[string]
+        $diagLines.Add("完整錯誤輸出：")
+        $diagLines.Add($verResult.Output)
+
+        $pythonDir = Split-Path -Parent $pythonExe
+        $pthFiles = Get-ChildItem -Path $pythonDir -Filter '*._pth' -ErrorAction SilentlyContinue
+        if ($pthFiles) {
+            foreach ($pth in $pthFiles) {
+                $diagLines.Add("")
+                $diagLines.Add("找到 $($pth.Name)，內容：")
+                $diagLines.Add((Get-Content $pth.FullName -Raw))
+            }
+            $diagLines.Add("")
+            $diagLines.Add("若這是 embeddable/portable Python，_pth 檔內若沒有 'import site' 或路徑寫死成舊機器的路徑，都會導致啟動失敗。")
+        }
+
+        if ($env:PYTHONHOME -or $env:PYTHONPATH) {
+            $diagLines.Add("")
+            $diagLines.Add("偵測到系統環境變數 PYTHONHOME='$($env:PYTHONHOME)' / PYTHONPATH='$($env:PYTHONPATH)'，可能與這個 portable Python 衝突，建議移除或確認指向正確路徑。")
+        }
+
+        Add-Result -Status FAIL -Check "Python 可正常啟動" -Detail ($diagLines -join "`n       ")
     }
 
     # 5. requirements.txt 套件檢查
-    $requirementsPath = Join-Path $AppRoot 'requirements.txt'
-    if (Test-Path $requirementsPath) {
-        $packages = Get-Content $requirementsPath | Where-Object { $_.Trim() -and -not $_.StartsWith('#') } |
-            ForEach-Object { ($_ -split '[><=!~]')[0].Trim() }
+    if (-not $pythonUsable) {
+        Add-Result -Status FAIL -Check "套件安裝檢查 (requirements.txt)" `
+            -Detail "python.exe 本身無法啟動，略過逐一套件檢查，請先解決上面『Python 可正常啟動』的問題"
+    } else {
+        $requirementsPath = Join-Path $AppRoot 'requirements.txt'
+        if (Test-Path $requirementsPath) {
+            $packages = Get-Content $requirementsPath | Where-Object { $_.Trim() -and -not $_.StartsWith('#') } |
+                ForEach-Object { ($_ -split '[><=!~]')[0].Trim() }
 
-        foreach ($pkg in $packages) {
-            try {
-                $showOutput = & $pythonExe -m pip show $pkg 2>&1
-                if ($LASTEXITCODE -eq 0) {
+            foreach ($pkg in $packages) {
+                $showResult = Invoke-Native -FilePath $pythonExe -ArgumentList @('-m', 'pip', 'show', $pkg)
+                if ($showResult.ExitCode -eq 0) {
                     Add-Result -Status PASS -Check "套件已安裝: $pkg"
                 } else {
-                    Add-Result -Status FAIL -Check "套件已安裝: $pkg" -Detail "pip show 找不到此套件"
+                    Add-Result -Status FAIL -Check "套件已安裝: $pkg" -Detail $showResult.Output
                 }
-            } catch {
-                Add-Result -Status FAIL -Check "套件已安裝: $pkg" -Detail $_.Exception.Message
             }
+        } else {
+            Add-Result -Status WARN -Check "requirements.txt 存在" -Detail "找不到 $requirementsPath，略過套件檢查"
         }
-    } else {
-        Add-Result -Status WARN -Check "requirements.txt 存在" -Detail "找不到 $requirementsPath，略過套件檢查"
     }
 } else {
     Add-Result -Status WARN -Check "Python 套件檢查" -Detail "找不到可用的 python.exe，略過"
@@ -249,17 +307,14 @@ try {
 if ($pythonExe -and $wfastcgiPy) {
     $appcmd = Join-Path $env:WINDIR 'System32\inetsrv\appcmd.exe'
     if (Test-Path $appcmd) {
-        try {
-            $fastCgiConfig = & $appcmd list config -section:system.webServer/fastCgi 2>&1
-            $expected = "$pythonExe|$wfastcgiPy"
-            if ($fastCgiConfig -match [regex]::Escape($pythonExe)) {
-                Add-Result -Status PASS -Check "IIS FastCGI 已登錄對應的 python.exe" -Detail $expected
-            } else {
-                Add-Result -Status FAIL -Check "IIS FastCGI 已登錄對應的 python.exe" `
-                    -Detail "applicationHost.config 內找不到此路徑，需在 IIS Manager 的 FastCGI 設定中新增：$expected"
-            }
-        } catch {
-            Add-Result -Status WARN -Check "IIS FastCGI 登錄檢查" -Detail $_.Exception.Message
+        $fastCgiResult = Invoke-Native -FilePath $appcmd -ArgumentList @('list', 'config', '-section:system.webServer/fastCgi')
+        $expected = "$pythonExe|$wfastcgiPy"
+        if ($fastCgiResult.Output -match [regex]::Escape($pythonExe)) {
+            Add-Result -Status PASS -Check "IIS FastCGI 已登錄對應的 python.exe" -Detail $expected
+        } else {
+            $fixCmd = "$appcmd set config -section:system.webServer/fastCgi /+`"[fullPath='$pythonExe',arguments='$wfastcgiPy']`" /commit:apphost"
+            Add-Result -Status FAIL -Check "IIS FastCGI 已登錄對應的 python.exe" `
+                -Detail "applicationHost.config 內找不到此路徑，可在 IIS Manager -> 伺服器層級 -> FastCGI 設定 新增，或用系統管理員權限執行：`n       $fixCmd"
         }
     } else {
         Add-Result -Status WARN -Check "IIS FastCGI 登錄檢查" -Detail "找不到 appcmd.exe，略過"
