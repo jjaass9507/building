@@ -218,6 +218,35 @@ if (Test-Path $webConfigPath) {
                              "       並同步更新 IIS FastCGI 登錄的 arguments 欄位，兩邊要完全一致。")
             }
         }
+        # PYTHONPATH 必須包含專案根目錄 (才 import 得到 app.py)，
+        # 若這份 Python 把標準函式庫放在獨立的 stdlib 資料夾 (常見於 portable 版)，
+        # 也必須一併列入，否則連 shutil 這種標準模組都會 ModuleNotFoundError。
+        if ($pythonPathValue) {
+            $pythonPathEntries = $pythonPathValue -split ';' | Where-Object { $_.Trim() }
+
+            if ($pythonPathEntries -contains $AppRoot.TrimEnd('\')) {
+                Add-Result -Status PASS -Check "PYTHONPATH 包含專案根目錄"
+            } else {
+                Add-Result -Status FAIL -Check "PYTHONPATH 包含專案根目錄" `
+                    -Detail "PYTHONPATH 為 '$pythonPathValue'，未包含 $AppRoot，wfastcgi 會 import 不到 app.py"
+            }
+
+            if ($pythonExe) {
+                $stdlibDir = Join-Path (Split-Path -Parent $pythonExe) 'stdlib'
+                if (Test-Path $stdlibDir) {
+                    if ($pythonPathEntries -contains $stdlibDir.TrimEnd('\')) {
+                        Add-Result -Status PASS -Check "PYTHONPATH 包含 stdlib 目錄"
+                    } else {
+                        Add-Result -Status FAIL -Check "PYTHONPATH 包含 stdlib 目錄" `
+                            -Detail ("偵測到標準函式庫目錄 $stdlibDir，但 PYTHONPATH 沒有列入。`n" +
+                                     "       這會導致 import shutil 之類的標準模組失敗 (ModuleNotFoundError)。`n" +
+                                     "       請把 PYTHONPATH 設成：$($AppRoot.TrimEnd('\'));$($stdlibDir.TrimEnd('\'))")
+                    }
+                }
+            }
+        } else {
+            Add-Result -Status WARN -Check "web.config 有設定 PYTHONPATH" -Detail "appSettings 內找不到 PYTHONPATH"
+        }
     } catch {
         Add-Result -Status FAIL -Check "web.config 可正確解析" -Detail $_.Exception.Message
     }
