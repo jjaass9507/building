@@ -49,3 +49,9 @@ export const formatPct = (value) => {
 export const getCellStyle = () => {
     return 'bg-white text-slate-700 border-slate-200 hover:border-blue-500 hover:shadow-md hover:text-blue-600';
 };
+
+// 組出正確的 API 網址。
+// 部署成 IIS 子應用程式時 (例如 /building_platform)，直接用 '/api/data' 會打到
+// 網站根目錄而不是這個應用程式，必須補上掛載前綴。前綴由後端寫進 window.APP_BASE，
+// 部署在網站根目錄時是空字串，行為與原本完全相同。
+export const apiUrl = (path) => `${window.APP_BASE || ''}${path}`;

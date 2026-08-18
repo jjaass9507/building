@@ -1,5 +1,5 @@
 import { processRawData } from './data.js';
-import { formatArea } from './utils.js';
+import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
 
 // --- 狀態管理 (State) ---
@@ -495,7 +495,7 @@ const renderAdminUploadPanel = () => {
 };
 
 const loadData = async () => {
-    const res = await fetch('/api/data', { cache: 'no-store' });
+    const res = await fetch(apiUrl('/api/data'), { cache: 'no-store' });
     if (!res.ok) throw new Error('API Error');
     const rawData = await res.json();
     const result = processRawData(rawData);
@@ -657,7 +657,7 @@ window.app = {
         render();
 
         try {
-            const res = await fetch('/api/admin/upload-data', { method: 'POST', body: formData });
+            const res = await fetch(apiUrl('/api/admin/upload-data'), { method: 'POST', body: formData });
             const result = await res.json();
 
             if (!res.ok || !result.success) {
@@ -688,7 +688,7 @@ window.app = {
 
 const init = async () => {
     try {
-        const meRes = await fetch('/api/me', { cache: 'no-store' });
+        const meRes = await fetch(apiUrl('/api/me'), { cache: 'no-store' });
         if (meRes.ok) {
             state.currentUser = await meRes.json();
         }

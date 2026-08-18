@@ -17,6 +17,13 @@
     </script>
 
     <script>
+        // 部署成 IIS 子應用程式時 (例如掛在 /building_platform 底下)，前端不能用
+        // '/api/...' 這種絕對路徑，否則會打到網站根目錄而不是這個應用程式。
+        // request.script_root 就是應用程式掛載的前綴，掛在根目錄時是空字串。
+        window.APP_BASE = "{{ request.script_root }}";
+    </script>
+
+    <script>
         if (localStorage.getItem('theme') === 'dark' || 
             (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.documentElement.classList.add('dark');
@@ -39,9 +46,9 @@
         </div>
     </div>
 
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=20260817-compare-table-v3"></script>
-    <script type="module" src="{{ url_for('static', filename='js/trend-overlay.js') }}?v=20260514-y25-trend-labels"></script>
-    <script type="module" src="{{ url_for('static', filename='js/utility-trend-admin.js') }}?v=20260514-utility-admin"></script>
-    <script type="module" src="{{ url_for('static', filename='js/site-area-sharing.js') }}?v=20260514-site-area-sharing"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}?v=20260818-subapp-base"></script>
+    <script type="module" src="{{ url_for('static', filename='js/trend-overlay.js') }}?v=20260818-subapp-base"></script>
+    <script type="module" src="{{ url_for('static', filename='js/utility-trend-admin.js') }}?v=20260818-subapp-base"></script>
+    <script type="module" src="{{ url_for('static', filename='js/site-area-sharing.js') }}?v=20260818-subapp-base"></script>
 </body>
 </html>

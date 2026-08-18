@@ -1,4 +1,4 @@
-import { formatArea } from './utils.js';
+import { formatArea, apiUrl } from './utils.js';
 
 const CONFIG_KEY = 'site_area_sharing';
 const DEFAULT_CONFIG = {
@@ -376,7 +376,7 @@ function showStatus(message, ok = true) {
 async function saveEditor(event) {
   event.stopPropagation();
   try {
-    utilityData = normalizeUtilityTrends(utilityData || await fetchJson('/api/utility-trends', { metrics: [] }));
+    utilityData = normalizeUtilityTrends(utilityData || await fetchJson(apiUrl('/api/utility-trends'), { metrics: [] }));
     const config = normalizeConfig(siteConfig);
     const validGroups = config.groups.filter(group => group.buildings.length > 1);
     utilityData[CONFIG_KEY] = {
@@ -386,7 +386,7 @@ async function saveEditor(event) {
       updated_by: currentUser?.username || 'admin'
     };
 
-    const res = await fetch('/api/admin/utility-trends', {
+    const res = await fetch(apiUrl('/api/admin/utility-trends'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(utilityData)
@@ -406,9 +406,9 @@ async function saveEditor(event) {
 async function ensureDataLoaded(force = false) {
   if (!force && rawData.length && utilityData && siteConfig) return;
   const [me, data, utility] = await Promise.all([
-    fetchJson('/api/me', null),
-    fetchJson('/api/data', []),
-    fetchJson('/api/utility-trends', { metrics: [] })
+    fetchJson(apiUrl('/api/me'), null),
+    fetchJson(apiUrl('/api/data'), []),
+    fetchJson(apiUrl('/api/utility-trends'), { metrics: [] })
   ]);
   currentUser = me || currentUser;
   rawData = Array.isArray(data) ? data : [];
