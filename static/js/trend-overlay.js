@@ -1,5 +1,5 @@
 import { processRawData } from './data.js';
-import { formatArea } from './utils.js';
+import { formatArea, apiUrl } from './utils.js';
 
 const OVERLAY_VERSION = 'prod-area-export-y25-labels-v3';
 const BASELINE_YEAR = 25;
@@ -132,7 +132,7 @@ function buildUtilityTrend(utilityData) {
 
 async function buildTrendData() {
   if (trendCache) return trendCache;
-  const [rawData, utilityData] = await Promise.all([fetchJson('/api/data', []), fetchJson('/api/utility-trends', { metrics: [] })]);
+  const [rawData, utilityData] = await Promise.all([fetchJson(apiUrl('/api/data'), []), fetchJson(apiUrl('/api/utility-trends'), { metrics: [] })]);
   trendCache = { metrics: { ...buildAreaTrend(rawData), ...buildUtilityTrend(utilityData) } };
   return trendCache;
 }

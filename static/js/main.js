@@ -1,6 +1,6 @@
 import { processRawData } from './data.js';
-import { formatArea } from './utils.js';
-import { renderHeader, renderMatrix, renderPanel } from './components.js';
+import { formatArea, apiUrl } from './utils.js';
+import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -17,7 +17,10 @@ const state = {
     isUploading: false,
     isTrendOpen: false,
     trendMetric: 'clean',
-    isFilterCollapsed: true
+    isFilterCollapsed: true,
+    isCompareTableOpen: false,
+    compareMode: 'value',
+    compareExpanded: []
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
@@ -66,6 +69,11 @@ const createTrendButton = () => `
         <i data-lucide="line-chart" class="w-3.5 h-3.5"></i> 成長趨勢
     </button>`;
 
+const createCompareTableButton = () => `
+    <button onclick="window.app.toggleCompareTable()" class="flex items-center gap-1 px-3 py-1 rounded text-base transition-all ${state.isCompareTableOpen ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold border border-slate-700 dark:border-blue-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-slate-700 font-bold'}">
+        <i data-lucide="table-2" class="w-3.5 h-3.5"></i> 比較表
+    </button>`;
+
 const createFilterToggleButton = () => `
     <button onclick="window.app.toggleFilterPanel()" class="flex items-center gap-1 px-3 py-1 rounded text-base transition-all ${state.isFilterCollapsed ? 'bg-slate-800 dark:bg-blue-600 text-white border border-slate-800 dark:border-blue-600 shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'} font-bold">
         <i data-lucide="${state.isFilterCollapsed ? 'sliders-horizontal' : 'chevron-up'}" class="w-3.5 h-3.5"></i>
@@ -107,7 +115,7 @@ const injectHeaderButtons = (headerHtml) => {
     if (!nextHtml.includes('openTrendModal')) {
         nextHtml = nextHtml.replace(
             /(<\/div>\s*<\/div>\s*<div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"><\/div>)/,
-            `${createTrendButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
+            `${createCompareTableButton()}${createTrendButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
         );
     }
 
@@ -487,7 +495,7 @@ const renderAdminUploadPanel = () => {
 };
 
 const loadData = async () => {
-    const res = await fetch('/api/data', { cache: 'no-store' });
+    const res = await fetch(apiUrl('/api/data'), { cache: 'no-store' });
     if (!res.ok) throw new Error('API Error');
     const rawData = await res.json();
     const result = processRawData(rawData);
@@ -546,7 +554,9 @@ const render = () => {
         ${headerHtml}
         ${renderAdminUploadPanel()}
         <main class="flex-1 p-2 md:p-4 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
-            ${renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
+            ${state.isCompareTableOpen
+                ? renderCompareTable(state, activeBuildings, dataForTotal, appData.meta, appData.sortedFloors)
+                : renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
         ${renderTrendModal()}
@@ -583,6 +593,16 @@ window.app = {
     },
     toggleFilterPanel: () => {
         state.isFilterCollapsed = !state.isFilterCollapsed;
+        render();
+    },
+    toggleCompareTable: () => {
+        state.isCompareTableOpen = !state.isCompareTableOpen;
+        render();
+    },
+    toggleCompareExpand: (bldg) => {
+        state.compareExpanded = state.compareExpanded.includes(bldg)
+            ? state.compareExpanded.filter(b => b !== bldg)
+            : [...state.compareExpanded, bldg];
         render();
     },
     openTrendModal: () => {
@@ -637,7 +657,7 @@ window.app = {
         render();
 
         try {
-            const res = await fetch('/api/admin/upload-data', { method: 'POST', body: formData });
+            const res = await fetch(apiUrl('/api/admin/upload-data'), { method: 'POST', body: formData });
             const result = await res.json();
 
             if (!res.ok || !result.success) {
@@ -668,7 +688,7 @@ window.app = {
 
 const init = async () => {
     try {
-        const meRes = await fetch('/api/me', { cache: 'no-store' });
+        const meRes = await fetch(apiUrl('/api/me'), { cache: 'no-store' });
         if (meRes.ok) {
             state.currentUser = await meRes.json();
         }

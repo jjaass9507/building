@@ -21,36 +21,6 @@
     -webkit-overflow-scrolling: touch;
 }
 
-/* 篩選區預設展開：覆蓋舊版 compact header 的 hidden 狀態 */
-header .hidden.flex-col.xl\:flex-row.gap-4.items-start {
-    display: flex !important;
-}
-
-header .hidden.flex-wrap.items-center.gap-6 {
-    display: flex !important;
-}
-
-header .hidden.h-px.w-full {
-    display: block !important;
-}
-
-/* 篩選切換按鈕：舊狀態仍為 collapsed 時，畫面固定呈現為已展開 */
-button[onclick="window.app.toggleFilterPanel()"] {
-    font-size: 0;
-}
-
-button[onclick="window.app.toggleFilterPanel()"]::after {
-    content: "收合篩選";
-    font-size: 1rem;
-    line-height: 1.5rem;
-}
-
-button[onclick="window.app.toggleFilterPanel()"] svg {
-    width: 0.875rem;
-    height: 0.875rem;
-    margin-right: 0.25rem;
-}
-
 /* 已成廠 / 未成廠篩選區塊視覺分組 */
 header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div {
     align-items: flex-start;

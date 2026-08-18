@@ -50,6 +50,38 @@ app = Flask(__name__, template_folder=template_path, static_folder=static_path)
 app.config['JSON_AS_ASCII'] = False
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
+
+class PrefixMiddleware:
+    """
+    部署成 IIS 子應用程式 (例如掛在 /building_platform 底下) 時，wfastcgi 傳進來的
+    PATH_INFO 會保留應用程式前綴，SCRIPT_NAME 卻是空字串，導致 Flask 拿
+    '/building_platform' 去比對只定義在 '/' 的路由，結果每一頁都是 404。
+
+    這裡把前綴從 PATH_INFO 搬到 SCRIPT_NAME，Flask 才能正確比對路由，
+    url_for() 產生的網址也才會帶上前綴 (static 檔案才不會 404)。
+
+    前綴由 APP_URL_PREFIX 指定；wfastcgi 會把 web.config 的 appSettings
+    放進環境變數，所以在 appSettings 加一行即可：
+        <add key="APP_URL_PREFIX" value="/building_platform" />
+    沒設定時不做任何處理，部署在網站根目錄的環境不受影響。
+    """
+
+    def __init__(self, wsgi_app, prefix=''):
+        self.wsgi_app = wsgi_app
+        stripped = (prefix or '').strip('/')
+        self.prefix = f"/{stripped}" if stripped else ''
+
+    def __call__(self, environ, start_response):
+        if self.prefix:
+            path = environ.get('PATH_INFO', '')
+            if path == self.prefix or path.startswith(f"{self.prefix}/"):
+                environ['PATH_INFO'] = path[len(self.prefix):] or '/'
+                environ['SCRIPT_NAME'] = self.prefix
+        return self.wsgi_app(environ, start_response)
+
+
+app.wsgi_app = PrefixMiddleware(app.wsgi_app, os.environ.get('APP_URL_PREFIX', ''))
+
 # --- 3. Logging ---
 
 logging.basicConfig(

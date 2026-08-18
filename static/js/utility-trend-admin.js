@@ -1,3 +1,5 @@
+import { apiUrl } from './utils.js';
+
 let currentUser = null;
 let utilityData = null;
 let isEditorOpen = false;
@@ -7,8 +9,8 @@ const escapeHtml = (value) => String(value ?? '').replace(/&/g, '&amp;').replace
 const yearNumber = (key) => Number(String(key || '').replace(/[^0-9]/g, '')) || null;
 const makeYearKey = (year) => `Y${year}`;
 
-async function fetchMe() { const res = await fetch('/api/me', { cache: 'no-store' }); if (!res.ok) return null; return res.json(); }
-async function fetchUtilityTrends() { const res = await fetch('/api/utility-trends', { cache: 'no-store' }); if (!res.ok) throw new Error('無法讀取需求趨勢資料'); return res.json(); }
+async function fetchMe() { const res = await fetch(apiUrl('/api/me'), { cache: 'no-store' }); if (!res.ok) return null; return res.json(); }
+async function fetchUtilityTrends() { const res = await fetch(apiUrl('/api/utility-trends'), { cache: 'no-store' }); if (!res.ok) throw new Error('無法讀取需求趨勢資料'); return res.json(); }
 
 function normalizeData(data) {
   const next = data || { schema_version: '1.0', metrics: [] };
@@ -75,6 +77,6 @@ function closeEditor() { isEditorOpen = false; document.getElementById('utility-
 function syncInput(event) { const input = event.target; const metric = utilityData.metrics[Number(input.dataset.metricIndex)]; if (!metric) return; if (input.dataset.field === 'metric_name') metric.metric_name = input.value; if (input.dataset.field === 'unit') metric.unit = input.value; if (input.dataset.field === 'value') getPoint(metric, input.dataset.yearKey).value = Number(input.value || 0); }
 function addYear() { const nums = getAllYearKeys(utilityData).filter(y => y.key !== 'current').map(y => yearNumber(y.key)).filter(Boolean); const nextYear = Math.max(DEFAULT_START_YEAR - 1, ...nums) + 1; const key = makeYearKey(nextYear); utilityData.metrics.forEach(metric => { if (!metric.series.some(point => point.year_key === key)) metric.series.push({ year_key: key, year_label: key, value: 0, is_baseline: false, note: '預計新增需求' }); }); renderEditor(); }
 function showStatus(message, ok = true) { const status = document.getElementById('utility-status'); if (!status) return; status.className = `rounded-lg px-4 py-3 text-sm font-bold ${ok ? 'border border-emerald-200 bg-emerald-50 text-emerald-700' : 'border border-red-200 bg-red-50 text-red-700'}`; status.textContent = message; }
-async function saveEditor() { try { const res = await fetch('/api/admin/utility-trends', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(utilityData) }); const result = await res.json(); if (!res.ok) throw new Error(result.message || '儲存失敗'); utilityData = normalizeData(result.data); showStatus(result.backup_file ? `儲存成功，已備份上一版：${result.backup_file}` : '儲存成功'); } catch (error) { showStatus(error.message || '儲存失敗', false); } }
+async function saveEditor() { try { const res = await fetch(apiUrl('/api/admin/utility-trends'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(utilityData) }); const result = await res.json(); if (!res.ok) throw new Error(result.message || '儲存失敗'); utilityData = normalizeData(result.data); showStatus(result.backup_file ? `儲存成功，已備份上一版：${result.backup_file}` : '儲存成功'); } catch (error) { showStatus(error.message || '儲存失敗', false); } }
 async function init() { try { currentUser = await fetchMe(); renderFloatingButton(); } catch (error) { console.warn('需求趨勢設定初始化失敗', error); } }
 init();

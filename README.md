@@ -424,6 +424,22 @@ http://127.0.0.1:5020
 8. 若使用 Windows 整合驗證，`app.py` 會從 `REMOTE_USER` 取得使用者帳號。
 9. 若 admin 要上傳大檔案，需確認 IIS request limit 與 Flask `MAX_CONTENT_LENGTH` 設定，目前 Flask 限制為 50MB。
 
+### 部署前自動檢查
+
+`scripts/check-deployment.ps1` 會讀取 `web.config` 內實際設定的路徑，檢查 Python / wfastcgi、IIS 功能與 FastCGI 登錄、專案檔案、`permissions.json`、執行期資料夾寫入權限、AD 網域加入狀態，以及前端 CDN 連線是否正常。在目標 Server 上、專案根目錄執行：
+
+```powershell
+.\scripts\check-deployment.ps1
+```
+
+若有指定 IIS 網站名稱，可額外檢查該網站的實體路徑與 Windows Authentication 設定：
+
+```powershell
+.\scripts\check-deployment.ps1 -SiteName "BuildingPlatform"
+```
+
+有任何 `FAIL` 項目時腳本會回傳非 0 的 Exit Code，可用於部署流程自動判斷。
+
 ---
 
 ## 使用者存取紀錄
