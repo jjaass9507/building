@@ -177,9 +177,19 @@ if (Test-Path $webConfigPath) {
         [xml]$webConfigXml = Get-Content $webConfigPath -Raw
 
         $scriptProcessor = $webConfigXml.configuration.'system.webServer'.handlers.add.scriptProcessor
-        if ($scriptProcessor -match '^(.*python\.exe)\|(.*wfastcgi\.py)$') {
-            $pythonExe = $Matches[1]
-            $wfastcgiPy = $Matches[2]
+
+        # scriptProcessor 格式為 {python.exe}|{wfastcgi.py 參數}，
+        # 其中參數部分可能（也建議）被引號包住，解析時要一併去掉引號。
+        $wfastcgiQuoted = $false
+        if ($scriptProcessor -match '^(.*?python\.exe)\|(.*)$') {
+            $pythonExe = $Matches[1].Trim()
+            $rawArgs   = $Matches[2].Trim()
+            if ($rawArgs -match '^"(.*)"$') {
+                $wfastcgiQuoted = $true
+                $wfastcgiPy = $Matches[1]
+            } else {
+                $wfastcgiPy = $rawArgs
+            }
         }
 
         $appSettings = $webConfigXml.configuration.appSettings.add
@@ -191,6 +201,22 @@ if (Test-Path $webConfigPath) {
                 -Detail "目前仍是範例/舊路徑：$scriptProcessor，請確認是否已改成這台 Server 的實際安裝路徑"
         } else {
             Add-Result -Status PASS -Check "web.config 路徑已改成本機實際路徑" -Detail $scriptProcessor
+        }
+
+        # 路徑含空白時，wfastcgi.py 參數一定要用引號包住。
+        # 否則 IIS 把未加引號的參數接到命令列，Windows 依空白拆解，Python 只收到第一段，
+        # 造成 can't open file 'D:\Web' -> IIS 回報 0x00000002「FastCGI 處理序意外地結束」，
+        # 而且因為 Python 在載入 wfastcgi.py 前就結束，app.log 完全不會有任何內容。
+        if ($wfastcgiPy -and $wfastcgiPy.Contains(' ')) {
+            if ($wfastcgiQuoted) {
+                Add-Result -Status PASS -Check "路徑含空白時 wfastcgi.py 參數已加引號"
+            } else {
+                Add-Result -Status FAIL -Check "路徑含空白時 wfastcgi.py 參數已加引號" `
+                    -Detail ("路徑含空白但未加引號，IIS 啟動時會被拆成兩段參數而失敗 (0x00000002)。`n" +
+                             "       請把 web.config 的 scriptProcessor 改成 (引號在 XML 內寫作 &quot;)：`n" +
+                             "       $pythonExe|`"$wfastcgiPy`"`n" +
+                             "       並同步更新 IIS FastCGI 登錄的 arguments 欄位，兩邊要完全一致。")
+            }
         }
     } catch {
         Add-Result -Status FAIL -Check "web.config 可正確解析" -Detail $_.Exception.Message
@@ -308,13 +334,30 @@ if ($pythonExe -and $wfastcgiPy) {
     $appcmd = Join-Path $env:WINDIR 'System32\inetsrv\appcmd.exe'
     if (Test-Path $appcmd) {
         $fastCgiResult = Invoke-Native -FilePath $appcmd -ArgumentList @('list', 'config', '-section:system.webServer/fastCgi')
-        $expected = "$pythonExe|$wfastcgiPy"
-        if ($fastCgiResult.Output -match [regex]::Escape($pythonExe)) {
-            Add-Result -Status PASS -Check "IIS FastCGI 已登錄對應的 python.exe" -Detail $expected
-        } else {
-            $fixCmd = "$appcmd set config -section:system.webServer/fastCgi /+`"[fullPath='$pythonExe',arguments='$wfastcgiPy']`" /commit:apphost"
+
+        # 若路徑含空白，登錄的 arguments 也必須帶引號，才會與 web.config 一致。
+        $expectedArgs = if ($wfastcgiPy.Contains(' ')) { "`"$wfastcgiPy`"" } else { $wfastcgiPy }
+
+        if ($fastCgiResult.Output -notmatch [regex]::Escape($pythonExe)) {
+            $fixCmd = "& `"$appcmd`" set config -section:system.webServer/fastCgi `"/+[fullPath='$pythonExe',arguments='$expectedArgs']`" /commit:apphost"
             Add-Result -Status FAIL -Check "IIS FastCGI 已登錄對應的 python.exe" `
                 -Detail "applicationHost.config 內找不到此路徑，可在 IIS Manager -> 伺服器層級 -> FastCGI 設定 新增，或用系統管理員權限執行：`n       $fixCmd"
+        } else {
+            Add-Result -Status PASS -Check "IIS FastCGI 已登錄對應的 python.exe" -Detail $pythonExe
+
+            # python.exe 有登錄不代表 arguments 正確；路徑含空白卻沒加引號一樣會啟動失敗。
+            if ($wfastcgiPy.Contains(' ')) {
+                if ($fastCgiResult.Output -match [regex]::Escape("arguments=`"$wfastcgiPy`"") -or
+                    $fastCgiResult.Output -match [regex]::Escape("&quot;$wfastcgiPy&quot;")) {
+                    Add-Result -Status PASS -Check "IIS FastCGI 登錄的 arguments 已正確加引號"
+                } else {
+                    Add-Result -Status FAIL -Check "IIS FastCGI 登錄的 arguments 已正確加引號" `
+                        -Detail ("登錄的 arguments 疑似未加引號，路徑含空白時會導致 0x00000002 啟動失敗。`n" +
+                                 "       請重新登錄 (先移除舊的再新增)：`n" +
+                                 "       & `"$appcmd`" set config -section:system.webServer/fastCgi `"/-[fullPath='$pythonExe',arguments='$wfastcgiPy']`" /commit:apphost`n" +
+                                 "       & `"$appcmd`" set config -section:system.webServer/fastCgi `"/+[fullPath='$pythonExe',arguments='$expectedArgs']`" /commit:apphost")
+                }
+            }
         }
     } else {
         Add-Result -Status WARN -Check "IIS FastCGI 登錄檢查" -Detail "找不到 appcmd.exe，略過"
