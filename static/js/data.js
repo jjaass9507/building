@@ -10,8 +10,6 @@ const toText = (value) => {
     return String(value).trim();
 };
 
-const isUnknownFloorSummary = (floorName) => String(floorName || '').toUpperCase().trim() === 'ALL';
-
 export const processRawData = (data) => {
     const tempFloors = new Set();
     const processedData = []; 
@@ -60,12 +58,13 @@ export const processRawData = (data) => {
             const fPubArea = toNumber(f["公設(含其他)(公式)(M2)"]);
             const fFloorLoad = toNumber(f["樓層載重kgf/m2"]);
 
-            // ALL 是樓層未定時的資料承載列。
-            // 若尚未有樓地板面積，但已填分類面積，外層單棟比例圖需要分母才能顯示。
+            // 樓地板面積沒填時（ALL 承載列或一般樓層都可能發生），以各分區面積加總推估。
+            // 否則分母是 0，比較表的樓地板面積會顯示 0、各分區佔比也會全部算成 0%，
+            // 但實際上分區面積是有值的。
             const categoryAreaTotal = fCleanArea + fProdArea + fFacValue + fPubArea;
-            const fTotalArea = rawTotalArea > 0
-                ? rawTotalArea
-                : (isUnknownFloorSummary(fName) ? categoryAreaTotal : rawTotalArea);
+            const hasRawTotalArea = rawTotalArea > 0;
+            const fTotalArea = hasRawTotalArea ? rawTotalArea : categoryAreaTotal;
+            const areaIsDerived = !hasRawTotalArea && categoryAreaTotal > 0;
 
             processedData.push({
                 id: `${bName}-${fName}`,
@@ -73,6 +72,7 @@ export const processRawData = (data) => {
                 floor: fName,
                 floorWeight: getFloorWeight(fName),
                 area: fTotalArea,
+                areaIsDerived,
                 height: toNumber(f["樓層高度(cm)"]),
                 floorLoad: fFloorLoad,
                 expectedCompletionYear,

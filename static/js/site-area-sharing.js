@@ -27,6 +27,7 @@ let utilityData = null;
 let siteConfig = null;
 let isEditorOpen = false;
 let observerInstalled = false;
+let appObserver = null;
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -133,11 +134,15 @@ function getSharedMap() {
   return map;
 }
 
+// 與主程式的總計規則一致：ALL 是樓層未定時的資料承載列，即使狀態是未成廠也要計入外層總計。
+// 否則同一棟的樓地板面積被算進總樓地板，基地面積卻沒被算進總基地面積。
+const isUnknownFloorRow = (floor) => String(floor?.['樓層'] || '').toUpperCase().trim() === 'ALL';
+
 function buildingIncluded(building, includeUnfinished) {
   if (includeUnfinished) return true;
   const floors = Array.isArray(building?.['樓層']) ? building['樓層'] : [];
   if (!floors.length) return false;
-  return floors.some(floor => String(floor?.['狀態'] || '').trim() !== '未成廠');
+  return floors.some(floor => String(floor?.['狀態'] || '').trim() !== '未成廠' || isUnknownFloorRow(floor));
 }
 
 function getHeaderUnit() {
@@ -152,9 +157,7 @@ function getIncludeUnfinishedState() {
   return Boolean(document.querySelector('header input[type="checkbox"]')?.checked);
 }
 
-function calculateTotalSiteArea() {
-  const includeUnfinished = getIncludeUnfinishedState();
-  const eligible = rawData.filter(building => buildingIncluded(building, includeUnfinished));
+function sumSiteArea(eligible) {
   const eligibleNames = new Set(eligible.map(building => String(building?.['棟別'] || '')));
   const byName = new Map(eligible.map(building => [String(building?.['棟別'] || ''), building]));
   const sharedMap = getSharedMap();
@@ -186,6 +189,16 @@ function calculateTotalSiteArea() {
   });
 
   return total;
+}
+
+function calculateTotalSiteArea() {
+  const includeUnfinished = getIncludeUnfinishedState();
+  return sumSiteArea(rawData.filter(building => buildingIncluded(building, includeUnfinished)));
+}
+
+function calculateSiteAreaForNames(names) {
+  const wanted = new Set(names.map(name => String(name)));
+  return sumSiteArea(rawData.filter(building => wanted.has(String(building?.['棟別'] || ''))));
 }
 
 function injectTotalSiteArea() {
@@ -237,9 +250,32 @@ function injectBuildingSharedBadges() {
   window.lucide?.createIcons?.();
 }
 
+// 比較表的「全廠棟」基地面積若直接加總，共用基地會被重複計算，
+// 導致跟表頭的總基地面積對不起來。這裡改成只計算表上實際列出的廠棟，且共用群組只算一次。
+function patchCompareTableTotalSiteArea() {
+  const cell = document.querySelector('[data-compare-total-base="true"]');
+  if (!cell || !rawData.length) return;
+
+  const names = Array.from(document.querySelectorAll('[data-compare-building]'))
+    .map(row => row.getAttribute('data-compare-building'))
+    .filter(Boolean);
+  if (!names.length) return;
+
+  const total = formatArea(calculateSiteAreaForNames(names), getHeaderUnit());
+  cell.textContent = total.val;
+  cell.setAttribute('title', '共用基地面積群組只計算一次');
+}
+
 function applySiteAreaEnhancements() {
-  injectTotalSiteArea();
-  injectBuildingSharedBadges();
+  // 這些補丁本身會改動 #app，必須先停止監看，否則會被自己的異動一直重新觸發。
+  appObserver?.disconnect();
+  try {
+    injectTotalSiteArea();
+    injectBuildingSharedBadges();
+    patchCompareTableTotalSiteArea();
+  } finally {
+    observeApp();
+  }
 }
 
 function renderFloatingButton() {
@@ -416,16 +452,24 @@ async function ensureDataLoaded(force = false) {
   siteConfig = normalizeConfig(utilityData[CONFIG_KEY]);
 }
 
+function observeApp() {
+  const app = document.getElementById('app');
+  if (!appObserver || !app) return;
+  appObserver.takeRecords();
+  appObserver.observe(app, { childList: true, subtree: true });
+}
+
 function installObserver() {
   if (observerInstalled) return;
   const app = document.getElementById('app');
   if (!app) return;
   observerInstalled = true;
   let timer = null;
-  new MutationObserver(() => {
+  appObserver = new MutationObserver(() => {
     clearTimeout(timer);
     timer = setTimeout(applySiteAreaEnhancements, 80);
-  }).observe(app, { childList: true, subtree: true });
+  });
+  observeApp();
 }
 
 async function init() {

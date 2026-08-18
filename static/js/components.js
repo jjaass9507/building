@@ -81,6 +81,24 @@ const getDetailsTooltip = (label, data, formattedVal) => {
 
 const formatRateToPct = (val) => (!val || val === 0) ? '-%' : `${Math.round(val * 100)}%`;
 
+// 佔比顯示：有面積就不會被四捨五入成 0%，避免「有數值卻顯示 0%」的誤解
+const formatSharePct = (pct) => {
+    if (!Number.isFinite(pct) || pct <= 0) return '0%';
+    if (pct < 0.1) return '<0.1%';
+    if (pct < 1) return `${pct.toFixed(1)}%`;
+    return `${Math.round(pct)}%`;
+};
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+// 放進 onclick="..." 字串參數用：先跳脫 JS 字串，再跳脫 HTML 屬性
+const escapeJsArg = (value) => escapeHtml(String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+
 const sortBuildings = (names) => {
     const order = STYLE_CONFIG.BUILDING_ORDER;
     return [...names].sort((a, b) => {
@@ -432,19 +450,24 @@ const COMPARE_METRICS = [
     { key: 'pubArea', label: '公設(其他)', color: STYLE_CONFIG.COLORS.PUB }
 ];
 
-export const renderCompareTable = (state, activeBuildings, processedData, buildingMeta, sortedFloors) => {
+export const renderCompareTable = (state, activeBuildings, processedData, buildingMeta) => {
     const { unit, compareMode, compareExpanded } = state;
     const sortedActive = sortBuildings(activeBuildings);
     const isAllFloor = (floor) => String(floor || '').toUpperCase().trim() === 'ALL';
     const unitLabel = unit === 'ping' ? '坪' : 'm²';
 
     const sumFor = (zones, key) => zones.reduce((acc, z) => acc + getVal(z[key]), 0);
+    // 佔比的分母：優先用樓地板面積；沒有樓地板面積時退回各分區加總，
+    // 才不會出現「分區有面積、佔比卻是 0%」。
+    const shareBaseOf = (zones) => {
+        const totalArea = sumFor(zones, 'area');
+        return totalArea > 0 ? totalArea : COMPARE_METRICS.reduce((acc, m) => acc + sumFor(zones, m.key), 0);
+    };
 
     // 每一個「份額」欄位：數字 (依模式顯示絕對值或佔比) + 底下一條依實際佔比繪製的刻度條
-    const renderMetricCell = (value, totalArea, color, isTotalRow) => {
-        const pct = totalArea > 0 ? (value / totalArea) * 100 : 0;
-        const pctRounded = Math.round(pct);
-        const display = compareMode === 'pct' ? `${pctRounded}%` : formatArea(value, unit).val;
+    const renderMetricCell = (value, shareBase, color, isTotalRow) => {
+        const pct = shareBase > 0 ? (value / shareBase) * 100 : 0;
+        const display = compareMode === 'pct' ? formatSharePct(pct) : formatArea(value, unit).val;
         const numCls = isTotalRow ? 'font-bold text-slate-800 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300';
 
         return `
@@ -458,58 +481,90 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
             </td>`;
     };
 
-    const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, isTotalRow = false } = {}) => {
+    const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, isTotalRow = false, rowAttrs = '', note = '' } = {}) => {
         const totalArea = sumFor(zones, 'area');
+        const shareBase = shareBaseOf(zones);
+        // 樓地板面積是由分區面積推估來的 (原始資料沒填) 時要標示，避免被當成量測值
+        const isDerivedArea = totalArea > 0 && zones.some(z => z.areaIsDerived && getVal(z.area) > 0);
+        const areaTitle = isDerivedArea ? ' title="原始資料未填樓地板面積，此值為各分區面積加總推估"' : '';
         const rowCls = isTotalRow
             ? 'bg-slate-100/80 dark:bg-slate-800/60 border-b-2 border-slate-300 dark:border-slate-700'
             : indent > 0
                 ? 'bg-slate-50/60 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/70 hover:bg-slate-100/70 dark:hover:bg-slate-800/40'
                 : 'bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/70 hover:bg-slate-50 dark:hover:bg-slate-800/50';
-        const clickable = expandable ? `onclick="window.app.toggleCompareExpand('${label}')" class="cursor-pointer"` : '';
+        const clickable = expandable ? `onclick="window.app.toggleCompareExpand('${escapeJsArg(label)}')" class="cursor-pointer"` : '';
+        const noteHtml = note
+            ? `<span class="ml-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-500">${escapeHtml(note)}</span>`
+            : '';
 
         const labelHtml = indent > 0
-            ? `<span class="inline-flex items-center border-l border-slate-300 dark:border-slate-700 pl-2.5 font-mono text-sm text-slate-500 dark:text-slate-400">${label}</span>`
+            ? `<span class="inline-flex items-center border-l border-slate-300 dark:border-slate-700 pl-2.5 font-mono text-sm text-slate-500 dark:text-slate-400">${escapeHtml(label)}</span>`
             : isTotalRow
-                ? `<span class="text-base font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200">${label}</span>`
-                : `<span class="text-base font-bold text-slate-800 dark:text-slate-100">${label}</span>`;
+                ? `<span class="text-base font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200">${escapeHtml(label)}</span>`
+                : `<span class="text-base font-bold text-slate-800 dark:text-slate-100">${escapeHtml(label)}</span>`;
 
         return `
-            <tr class="${rowCls} transition-colors" ${clickable}>
+            <tr class="${rowCls} transition-colors"${rowAttrs} ${clickable}>
                 <td class="px-4 py-3 align-middle ${isTotalRow ? 'border-l-[3px] border-l-blue-600 dark:border-l-blue-500' : ''}">
                     <div class="flex items-center gap-2" style="padding-left: ${indent * 1.5}rem">
                         ${expandable
                             ? `<i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}" class="w-4 h-4 text-slate-400 shrink-0"></i>`
                             : `<span class="w-4 shrink-0 inline-block"></span>`}
-                        ${labelHtml}
+                        ${labelHtml}${noteHtml}
                     </div>
                 </td>
                 <td class="px-4 py-3 text-right align-middle border-l border-slate-100 dark:border-slate-800/70">
-                    <span class="font-mono tabular-nums text-sm text-slate-400 dark:text-slate-500">${baseArea !== null ? formatArea(baseArea, unit).val : '—'}</span>
+                    <span class="font-mono tabular-nums text-sm text-slate-400 dark:text-slate-500"${isTotalRow ? ' data-compare-total-base="true"' : ''}>${baseArea !== null ? formatArea(baseArea, unit).val : '—'}</span>
                 </td>
-                <td class="px-4 py-3 text-right align-middle border-l border-slate-100 dark:border-slate-800/70">
-                    <span class="font-mono tabular-nums text-base ${isTotalRow ? 'font-bold text-slate-800 dark:text-white' : 'font-semibold text-slate-700 dark:text-slate-200'}">${formatArea(totalArea, unit).val}</span>
+                <td class="px-4 py-3 text-right align-middle border-l border-slate-100 dark:border-slate-800/70"${areaTitle}>
+                    <span class="font-mono tabular-nums text-base ${isTotalRow ? 'font-bold text-slate-800 dark:text-white' : 'font-semibold text-slate-700 dark:text-slate-200'}">${isDerivedArea ? '≈' : ''}${formatArea(totalArea, unit).val}</span>
                 </td>
-                ${COMPARE_METRICS.map(m => renderMetricCell(sumFor(zones, m.key), totalArea, m.color, isTotalRow)).join('')}
+                ${COMPARE_METRICS.map(m => renderMetricCell(sumFor(zones, m.key), shareBase, m.color, isTotalRow)).join('')}
             </tr>`;
     };
 
     const allZones = processedData.filter(d => sortedActive.includes(d.building));
-    const totalBaseArea = sortedActive.reduce((acc, b) => acc + Number(buildingMeta[b]?.baseArea || 0), 0);
+    // 被「包含未成廠」濾掉、完全沒有資料列的廠棟不列出來：
+    // 之前會留下一整列 0，看起來像是有面積卻讀不到。
+    const zonesByBuilding = new Map();
+    allZones.forEach(z => {
+        if (!zonesByBuilding.has(z.building)) zonesByBuilding.set(z.building, []);
+        zonesByBuilding.get(z.building).push(z);
+    });
+    const visibleBuildings = sortedActive.filter(b => (zonesByBuilding.get(b) || []).length > 0);
+    const hiddenCount = sortedActive.length - visibleBuildings.length;
+
+    // 基地面積合計只加總實際列出來的廠棟，才會跟樓地板面積同一個母體
+    const totalBaseArea = visibleBuildings.reduce((acc, b) => acc + Number(buildingMeta[b]?.baseArea || 0), 0);
 
     const summaryRow = renderRow('全廠棟', allZones, { baseArea: totalBaseArea, isTotalRow: true });
 
-    const buildingRows = sortedActive.map(bldg => {
+    // 樓層順序：以該棟實際有的樓層為準 (含 ALL 承載列)，避免明細加總對不上廠棟列
+    const floorWeightOf = (zones, floor) => {
+        const hit = zones.find(z => z.floor === floor);
+        return Number.isFinite(hit?.floorWeight) ? hit.floorWeight : 0;
+    };
+
+    const buildingRows = visibleBuildings.map(bldg => {
         const meta = buildingMeta[bldg] || {};
-        const bZones = allZones.filter(d => d.building === bldg);
-        const isExpanded = compareExpanded.includes(bldg);
-        const bRow = renderRow(bldg, bZones, { baseArea: meta.baseArea, indent: 1, expandable: true, expanded: isExpanded });
+        const bZones = zonesByBuilding.get(bldg) || [];
+        const buildingFloors = [...new Set(bZones.map(z => z.floor))]
+            .sort((a, b) => floorWeightOf(bZones, b) - floorWeightOf(bZones, a));
+        const canExpand = buildingFloors.length > 0;
+        const isExpanded = canExpand && compareExpanded.includes(bldg);
+        const bRow = renderRow(bldg, bZones, {
+            baseArea: meta.baseArea,
+            indent: 1,
+            expandable: canExpand,
+            expanded: isExpanded,
+            rowAttrs: ` data-compare-building="${escapeHtml(bldg)}"`
+        });
 
         if (!isExpanded) return bRow;
 
-        const buildingFloors = (sortedFloors || []).filter(f => !isAllFloor(f) && bZones.some(z => z.floor === f));
         const floorRows = buildingFloors.map(floor => {
             const fZones = bZones.filter(z => z.floor === floor);
-            return renderRow(floor, fZones, { indent: 2 });
+            return renderRow(floor, fZones, { indent: 2, note: isAllFloor(floor) ? '(樓層未定)' : '' });
         }).join('');
 
         return bRow + floorRows;
@@ -525,7 +580,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                     <div class="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                         <i data-lucide="table-2" class="w-4 h-4 text-slate-400"></i> 面積比較表
                     </div>
-                    <span class="text-[13px] text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 點擊廠棟列展開樓層明細</span>
+                    <span class="text-[13px] text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 點擊廠棟列展開樓層明細${hiddenCount > 0 ? ` ・ <span class="text-amber-600 dark:text-amber-500 font-bold">未成廠 ${hiddenCount} 棟未列入 (可開啟「包含未成廠」)</span>` : ''}</span>
                 </div>
                 <div class="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-sm p-0.5">
                     ${modeBtn('value', '實際數值')}

@@ -1,6 +1,7 @@
-import { processRawData } from './data.js';
+// 內層模組沒有版號時，瀏覽器可能沿用舊快取，導致 index.html 換了版號還是跑到舊邏輯。
+import { processRawData } from './data.js?v=20260818-compare-fix';
 import { formatArea, apiUrl } from './utils.js';
-import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
+import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js?v=20260818-compare-fix';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -555,7 +556,7 @@ const render = () => {
         ${renderAdminUploadPanel()}
         <main class="flex-1 p-2 md:p-4 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             ${state.isCompareTableOpen
-                ? renderCompareTable(state, activeBuildings, dataForTotal, appData.meta, appData.sortedFloors)
+                ? renderCompareTable(state, activeBuildings, dataForTotal, appData.meta)
                 : renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
