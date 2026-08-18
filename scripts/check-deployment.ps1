@@ -26,7 +26,9 @@
     有任何 [FAIL] 時，Exit Code 會是 1，方便串接自動化部署流程判斷成功與否。
 
 .PARAMETER AppRoot
-    專案根目錄路徑。預設為本腳本所在目錄的上一層 (scripts/ 的上層)。
+    專案根目錄路徑。不指定時會自動偵測：無論本腳本是放在專案根目錄底下，
+    還是放在專案根目錄的 scripts\ 子資料夾底下，都會抓到正確的專案根目錄
+    (以資料夾內是否有 app.py 判斷)。若自動偵測失敗，請自行帶入此參數。
 
 .PARAMETER SiteName
     (可選) IIS 網站名稱，指定後會額外檢查該網站的實體路徑與 Windows Authentication 設定。
@@ -40,11 +42,38 @@
 
 [CmdletBinding()]
 param(
-    [string]$AppRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$AppRoot,
     [string]$SiteName
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($AppRoot)) {
+    # $PSScriptRoot 在某些執行方式下 (例如在 ISE/主控台選取片段執行、
+    # 用舊版 PowerShell、或用 Invoke-Expression 貼上執行) 會是空字串，
+    # 因此這裡準備多層 fallback，確保腳本無論怎麼跑都能找到自己的位置。
+    $scriptDir = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($scriptDir) -and $MyInvocation.MyCommand.Path) {
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+        $scriptDir = (Get-Location).Path
+        Write-Warning "無法自動偵測腳本所在路徑，改用目前工作目錄：$scriptDir。若判斷錯誤，請改用 -AppRoot 參數指定專案根目錄。"
+    }
+
+    if (Test-Path (Join-Path $scriptDir 'app.py')) {
+        # 腳本被放在專案根目錄底下
+        $AppRoot = $scriptDir
+    } else {
+        $parentDir = Split-Path -Parent $scriptDir
+        if ($parentDir -and (Test-Path (Join-Path $parentDir 'app.py'))) {
+            # 腳本被放在專案根目錄的 scripts\ 子資料夾底下
+            $AppRoot = $parentDir
+        } else {
+            $AppRoot = $scriptDir
+        }
+    }
+}
 
 $script:results = New-Object System.Collections.Generic.List[object]
 
