@@ -410,7 +410,7 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                     return `
                     <div class="flex flex-col">
                         <div onclick="window.app.selectBuilding('${bldg}')" class="flex flex-col justify-between items-center ${HEADER_HEIGHT} text-center border-b-4 border-slate-700 dark:border-blue-600 sticky top-0 z-30 w-[40vw] md:w-72 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800 pt-1 pb-1 shadow-sm">
-                            <div class="flex items-center gap-1.5 text-lg md:text-2xl font-black text-slate-800 dark:text-slate-100">${bldg} <i data-lucide="info" class="w-3.5 h-3.5 text-slate-400"></i></div>
+                            <div data-building-name="${bldg}" class="flex items-center gap-1.5 text-lg md:text-2xl font-black text-slate-800 dark:text-slate-100">${bldg} <i data-lucide="info" class="w-3.5 h-3.5 text-slate-400"></i></div>
                             <div class="flex flex-col gap-1 w-full px-2">
                                 <div class="flex justify-between items-center px-2 py-0.5 bg-slate-50 dark:bg-slate-800 rounded border border-slate-100 dark:border-slate-700">
                                     <span class="${HEADER_INFO_LABEL} font-bold text-slate-700 dark:text-slate-400">基地面積</span>
