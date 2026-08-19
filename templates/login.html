@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登入｜ASE建物管理平台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 登入頁靠 .hidden 切換面板。萬一公司網路擋掉 Tailwind CDN，
+           這行可以確保面板仍然正確隱藏，畫面不會全部擠在一起。 */
+        .hidden { display: none !important; }
+    </style>
+    <script>
+        // 掛在 IIS 子應用程式底下時，前端不能用 '/api/...' 這種絕對路徑。
+        window.APP_BASE = {{ request.script_root | tojson }};
+        window.LOGIN_CONFIG = {
+            nextTarget: {{ next_target | tojson }},
+            autoSso: {{ auto_sso | tojson }},
+            ssoProbeEnabled: {{ sso_probe_enabled | tojson }},
+            adLoginAvailable: {{ ad_login_available | tojson }}
+        };
+    </script>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center px-4 py-10">
+
+    <main class="bg-white shadow-xl rounded-2xl p-8 md:p-10 max-w-md w-full border border-slate-200">
+
+        <div class="text-center mb-7">
+            <div class="mx-auto mb-4 w-14 h-14 rounded-xl bg-slate-800 flex items-center justify-center">
+                <span class="text-white text-2xl font-black">AD</span>
+            </div>
+            <h1 class="text-2xl font-black text-slate-800">ASE建物管理平台</h1>
+            <p class="text-slate-500 text-sm mt-1">請使用公司 AD 帳號登入</p>
+        </div>
+
+        <!-- SSO 嘗試中 -->
+        <div id="sso-panel" class="hidden">
+            <div class="flex flex-col items-center justify-center gap-4 py-8">
+                <div class="w-10 h-10 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+                <p class="text-slate-500 text-sm font-medium">正在使用 Windows 帳號自動登入…</p>
+                <button type="button" id="skip-sso-btn"
+                        class="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2">
+                    改用 AD 帳號密碼登入
+                </button>
+            </div>
+        </div>
+
+        <!-- 登入表單 -->
+        <div id="form-panel" class="hidden">
+            <div id="message-box" class="hidden mb-5 rounded-xl px-4 py-3 text-sm leading-relaxed border"></div>
+
+            <form id="login-form" class="space-y-4" autocomplete="on">
+                <div>
+                    <label for="username" class="block text-sm font-bold text-slate-600 mb-1.5">AD 帳號</label>
+                    <input id="username" name="username" type="text" autocomplete="username" required
+                           placeholder="例：K11879"
+                           class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-800 font-mono
+                                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+
+                <div>
+                    <label for="password" class="block text-sm font-bold text-slate-600 mb-1.5">密碼</label>
+                    <input id="password" name="password" type="password" autocomplete="current-password" required
+                           placeholder="AD 網域密碼"
+                           class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-800
+                                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+
+                <button type="submit" id="submit-btn"
+                        class="w-full bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 disabled:cursor-not-allowed
+                               text-white font-bold rounded-xl py-2.5 transition-colors">
+                    登入
+                </button>
+            </form>
+
+            <div id="sso-retry-wrap" class="mt-5 pt-5 border-t border-slate-100 text-center">
+                <button type="button" id="sso-retry-btn"
+                        class="text-sm font-bold text-blue-600 hover:text-blue-700">
+                    改用 Windows 帳號登入（單一登入）
+                </button>
+                <p class="text-xs text-slate-400 mt-2">
+                    在公司網域電腦上通常不需要輸入密碼。
+                </p>
+            </div>
+        </div>
+
+        <p class="mt-8 text-center text-xs text-slate-400 leading-relaxed">
+            帳號密碼即為登入 Windows 使用的公司網域帳號。<br>
+            若登入後仍顯示無權限，請聯繫系統管理者開通權限。
+        </p>
+    </main>
+
+    <script>
+    (function () {
+        const BASE = window.APP_BASE || '';
+        const CONFIG = window.LOGIN_CONFIG || {};
+
+        const ssoPanel = document.getElementById('sso-panel');
+        const formPanel = document.getElementById('form-panel');
+        const messageBox = document.getElementById('message-box');
+        const form = document.getElementById('login-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const ssoRetryWrap = document.getElementById('sso-retry-wrap');
+
+        const STYLES = {
+            error: 'bg-red-50 border-red-200 text-red-700',
+            warn: 'bg-amber-50 border-amber-200 text-amber-700',
+            info: 'bg-slate-50 border-slate-200 text-slate-600'
+        };
+
+        function showMessage(text, kind) {
+            messageBox.className = 'mb-5 rounded-xl px-4 py-3 text-sm leading-relaxed border ' + (STYLES[kind] || STYLES.info);
+            messageBox.textContent = text;
+        }
+
+        function clearMessage() {
+            messageBox.className = 'hidden';
+            messageBox.textContent = '';
+        }
+
+        function showForm(text, kind) {
+            ssoPanel.classList.add('hidden');
+            formPanel.classList.remove('hidden');
+            if (text) {
+                showMessage(text, kind);
+            } else {
+                clearMessage();
+            }
+            if (!CONFIG.ssoProbeEnabled) {
+                ssoRetryWrap.classList.add('hidden');
+            }
+            if (!CONFIG.adLoginAvailable) {
+                submitBtn.disabled = true;
+                showMessage('系統尚未設定 AD 伺服器，無法使用帳號密碼登入，請聯繫系統管理者。', 'error');
+            }
+            setTimeout(function () { usernameInput.focus(); }, 50);
+        }
+
+        function goToApp(url) {
+            window.location.replace(url || CONFIG.nextTarget || (BASE + '/'));
+        }
+
+        // --- Windows SSO 探測 ---
+        // /auth/sso 是站台上唯一關閉匿名驗證的路徑：
+        //  * 網域電腦：瀏覽器自動送出 Windows 身分，無聲登入。
+        //  * 非網域電腦：跳出 Windows 帳密視窗，使用者按取消 → 這裡收到 401 或錯誤，
+        //    直接切到下面的 AD 登入表單，不會出現 IIS 的錯誤頁。
+        async function probeSso(isManualRetry) {
+            ssoPanel.classList.remove('hidden');
+            formPanel.classList.add('hidden');
+
+            try {
+                const res = await fetch(BASE + '/auth/sso', { credentials: 'include', cache: 'no-store' });
+                if (!res.ok) {
+                    showForm('無法完成 Windows 自動登入，請改用 AD 帳號密碼登入。', 'warn');
+                    return;
+                }
+
+                const data = await res.json();
+                if (data.ok && data.authorized) {
+                    goToApp();
+                    return;
+                }
+
+                if (data.ok && !data.authorized) {
+                    showForm('Windows 帳號「' + data.username + '」尚未被授權使用本系統。'
+                        + '請聯繫系統管理者開通，或改用其他已授權的 AD 帳號登入。', 'warn');
+                    return;
+                }
+
+                showForm(isManualRetry
+                    ? '伺服器未取得 Windows 身分，請改用 AD 帳號密碼登入。'
+                    : '', 'warn');
+            } catch (e) {
+                showForm('Windows 自動登入未完成，請輸入 AD 帳號密碼登入。', 'warn');
+            }
+        }
+
+        document.getElementById('skip-sso-btn').addEventListener('click', function () {
+            showForm('', null);
+        });
+
+        document.getElementById('sso-retry-btn').addEventListener('click', function () {
+            clearMessage();
+            probeSso(true);
+        });
+
+        // --- AD 帳密登入 ---
+        form.addEventListener('submit', async function (event) {
+            event.preventDefault();
+            clearMessage();
+
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value;
+
+            if (!username || !password) {
+                showMessage('請輸入 AD 帳號與密碼。', 'error');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '登入中…';
+
+            try {
+                const res = await fetch(BASE + '/api/auth/login', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password,
+                        next: CONFIG.nextTarget
+                    })
+                });
+
+                const data = await res.json().catch(function () { return {}; });
+
+                if (data.ok && data.authorized) {
+                    goToApp(data.redirect_url);
+                    return;
+                }
+
+                if (data.ok && !data.authorized) {
+                    showMessage('帳號「' + data.username + '」通過 AD 驗證，但尚未被授權使用本系統，請聯繫系統管理者。', 'warn');
+                } else {
+                    showMessage(data.message || '登入失敗，請稍後再試。', 'error');
+                }
+                passwordInput.value = '';
+                passwordInput.focus();
+            } catch (e) {
+                showMessage('無法連線伺服器，請稍後再試。', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '登入';
+            }
+        });
+
+        if (CONFIG.autoSso) {
+            probeSso(false);
+        } else {
+            showForm('', null);
+        }
+    })();
+    </script>
+</body>
+</html>

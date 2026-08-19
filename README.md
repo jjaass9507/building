@@ -59,11 +59,16 @@ building/
 ├── data.json                  # 執行時資料檔，需自行放置於專案根目錄
 ├── access_log.txt             # 執行後自動產生的使用者存取紀錄
 ├── app.log                    # IIS / wfastcgi log，依 web.config 設定產生
+├── secret_key.txt             # 登入 session 簽章金鑰，首次啟動自動產生，不納入版控
+├── scripts/
+│   ├── check-deployment.ps1   # 部署前環境自動檢查
+│   └── setup-ad-login.ps1     # 設定 IIS 驗證（匿名 + Windows 並存）
 ├── uploads/                   # admin 上傳的原始 Excel 留存，不納入版控
 ├── processed/                 # 清洗後 Excel 與暫存 JSON，不納入版控
 ├── data_backups/              # data.json 舊版備份，不納入版控
 ├── templates/
 │   ├── index.html
+│   ├── login.html             # 登入畫面（Windows SSO + AD 帳密登入）
 │   └── 403.html               # 無權限存取頁面
 └── static/
     ├── css/
@@ -94,7 +99,8 @@ Flask 後端主程式，負責：
 - 提供 admin 上傳 API `/api/admin/upload-data`
 - 讀取根目錄下的 `data.json`
 - 讀取根目錄下的 `permissions.json`
-- 透過 `REMOTE_USER` 取得 Windows AD 使用者
+- 透過 `REMOTE_USER` / Windows token 取得 Windows AD 使用者（單一登入）
+- 沒有 Windows 身分時導向 `/login` 登入畫面，並以 `ldap3` 驗證 AD 帳號密碼
 - 依角色檢查使用者是否允許存取頁面 / API
 - 上傳 Excel 後先備份上一版 `data.json`，再更新目前資料
 - 記錄使用者存取資訊到 `access_log.txt`
@@ -105,6 +111,12 @@ Flask 後端主程式，負責：
 | Route | Method | 權限 | 說明 |
 |---|---|---|---|
 | `/` | GET | admin / user / viewer | 回傳 `templates/index.html` |
+| `/login` | GET | 匿名 | 登入畫面（自動 SSO ＋ AD 帳密表單） |
+| `/auth/sso` | GET | 匿名（IIS 端關閉匿名） | Windows 單一登入探測 |
+| `/api/auth/status` | GET | 匿名 | 回傳目前登入狀態，永遠 200 |
+| `/api/auth/login` | POST | 匿名 | AD 帳號密碼登入 |
+| `/api/auth/logout` | POST | 匿名 | 登出（前端呼叫） |
+| `/logout` | GET | 匿名 | 登出並回到登入畫面 |
 | `/api/me` | GET | admin / user / viewer | 回傳目前使用者帳號與角色 |
 | `/api/data` | GET | admin / user / viewer | 讀取 `data.json` 並回傳 JSON |
 | `/api/admin/upload-data` | POST | admin | 上傳 Excel，清洗、備份舊版並更新 `data.json` |
@@ -209,30 +221,77 @@ DOMAIN\username
 
 ---
 
-## 權限控管流程
+## 登入流程（Windows SSO ＋ AD 登入畫面）
 
 ```text
-使用者進入系統
+使用者開啟平台網址
     ↓
-IIS Windows Integrated Authentication 完成身份驗證
+IIS：應用程式根目錄允許匿名 → request 一定進得到 Flask
     ↓
-Flask 從 request.environ['REMOTE_USER'] 取得 AD 帳號
+Flask 檢查身分（session 手動登入 → Windows SSO）
     ↓
-Flask 讀取 permissions.json
+沒有身分 → 導向 /login 登入畫面
     ↓
-比對使用者屬於 admin / user / viewer 哪個角色
+登入頁背景呼叫 /auth/sso（IIS 上唯一關閉匿名的路徑）
+    ├─ 網域內電腦：自動帶入 Windows 身分 → 無聲登入，直接進系統
+    └─ 非網域電腦：跳出 Windows 帳密視窗
+           ├─ 使用者輸入 → 完成 SSO 進入系統
+           └─ 使用者按取消 → 停留在登入畫面，改輸入 AD 帳號密碼
+                    ↓
+              POST /api/auth/login → ldap3 SIMPLE bind 驗證 AD 密碼
+                    ↓
+              驗證成功 → 寫入 session → 進入系統
     ↓
-有權限：允許進入頁面或 API
-無權限：頁面顯示 403.html，API 回傳 403 JSON
+Flask 讀取 permissions.json，比對 admin / user / viewer
+    ↓
+有權限：進入頁面或 API
+無權限：頁面顯示 403.html（附「改用其他 AD 帳號登入」），API 回傳 403 JSON
 ```
 
-若本機開發沒有 `REMOTE_USER`，系統會使用：
+**重點：使用者按掉 Windows 帳密視窗時，不會再看到 IIS 的錯誤畫面，而是本系統的登入頁。**
 
-```text
-Local-Dev
-```
+### 登入相關路由
 
-因此預設 `permissions.json` 會把 `Local-Dev` 放在 `admins`，方便本機測試。
+| 路由 | 用途 | 匿名可存取 |
+|---|---|---|
+| `GET /login` | 登入畫面（自動 SSO ＋ AD 帳密表單） | ✅ |
+| `GET /auth/sso` | Windows SSO 探測，回 `{ok, username, role, authorized}` | ❌（IIS 關閉匿名） |
+| `GET /api/auth/status` | 目前登入狀態（永遠回 200） | ✅ |
+| `POST /api/auth/login` | AD 帳密登入 `{username, password}` | ✅ |
+| `POST /api/auth/logout` | 登出（前端用） | ✅ |
+| `GET /logout` | 登出並回到登入畫面（右上角登出按鈕） | ✅ |
+
+> 所有「未登入」的回應一律不使用 HTTP 401。IIS 會攔截 401 並再彈一次 Windows 帳密視窗，
+> 所以未登入的 API 回 `403 + {"error": "unauthenticated"}`，前端據此導向登入頁。
+
+### AD 設定（web.config 的 appSettings 或系統環境變數）
+
+| 設定 | 說明 | 範例 |
+|---|---|---|
+| `AD_SERVER` | LDAP 位址，用 NetBIOS 網域名最單純 | `ldap://ASE` |
+| `AD_DOMAIN` | 完整網域名稱（UPN 格式備援用） | `ase.com.tw` |
+| `AD_NETBIOS` | NetBIOS 網域名，留空自動推導 | `ASE` |
+| `AD_TIMEOUT` | LDAP 連線逾時秒數（預設 5） | `5` |
+| `APP_SECRET_KEY` | session cookie 簽章金鑰；留空會自動產生 `secret_key.txt` | 隨機字串 |
+| `APP_SSO_PROBE` | 是否啟用 Windows 單一登入探測（預設 `true`） | `true` / `false` |
+| `APP_DEV_USER` | 本機開發用假身分，**正式機請勿設定** | `Local-Dev` |
+| `AD_MOCK` | 本機開發用：不連 AD，任何密碼都通過，**正式機請勿設定** | `true` |
+
+AD 密碼驗證使用 `ldap3` 的 **SIMPLE bind**（不是 NTLM）。
+Python 3.9+ 搭配 OpenSSL 3.0 已停用 MD4，NTLM bind 會直接失敗（`unsupported hash type MD4`），
+SIMPLE bind 不需要 MD4。bind 帳號格式依序嘗試 `NETBIOS\帳號` → `帳號@網域` → `帳號`。
+
+### 帳號比對規則
+
+同一個人在不同來源寫法不同（SSO 是 `ASE\K11879`，手動登入是 `K11879`），
+系統比對 `permissions.json` 時會自動拆解 `網域\帳號`、`帳號@網域`、純帳號三種寫法，
+因此 `permissions.json` 填哪一種都可以對得起來。
+
+### 本機開發
+
+本機沒有 IIS，也就沒有 Windows 身分。直接執行 `python app.py` 時會自動以
+`Local-Dev` 身分登入（`permissions.json` 預設把 `Local-Dev` 放在 `admins`）。
+若要測試登入畫面本身，可設定環境變數 `AD_MOCK=true` 並清掉 `APP_DEV_USER`。
 
 ---
 
@@ -277,9 +336,26 @@ data_YYYYMMDD_HHMMSS_USERNAME.json
 ```json
 {
   "username": "ASE\\mattchen",
-  "role": "admin"
+  "role": "admin",
+  "auth_type": "sso",
+  "logout_url": "/logout"
 }
 ```
+
+`auth_type` 可能為 `sso`（Windows 單一登入）、`manual`（AD 帳密登入）或 `dev`（本機開發身分）。
+
+### 尚未登入時（`/api/me` 等需要權限的 API）
+
+```json
+{
+  "error": "unauthenticated",
+  "message": "尚未登入，請先登入。",
+  "login_url": "/login"
+}
+```
+
+HTTP 狀態碼為 **403**（刻意不用 401，避免 IIS 攔截後再彈出 Windows 帳密視窗）。
+前端收到後會自動導向 `login_url`。
 
 ### `/api/admin/upload-data` 成功
 
@@ -409,20 +485,50 @@ http://127.0.0.1:5020
 ## IIS 部署注意事項
 
 1. 確認 IIS 已啟用 CGI / FastCGI。
-2. 確認 IIS 已啟用 Windows Authentication，並視需求關閉 Anonymous Authentication。
-3. 確認 Python 與 `wfastcgi.py` 路徑與 `web.config` 一致。
-4. 確認 `PYTHONPATH` 指向專案根目錄。
-5. 確認 IIS App Pool 身分有權限讀取專案目錄。
-6. 確認 IIS App Pool 身分有權限寫入：
+2. 確認 IIS 驗證設定（**與登入畫面直接相關，請務必照做**）：
+
+   | 路徑 | 匿名驗證 | Windows 驗證 |
+   |---|---|---|
+   | 應用程式根目錄 | **啟用** | 啟用 |
+   | `<應用程式>/auth/sso` | **停用** | 啟用 |
+
+   根目錄開放匿名，使用者按掉 Windows 帳密視窗時 request 才進得到 Flask，
+   由程式導向自家登入畫面；`/auth/sso` 關閉匿名，網域內電腦才能繼續單一登入。
+
+   這兩個區段預設鎖在 `applicationHost.config`，寫進 `web.config` 會出現 HTTP 500.19，
+   請以系統管理員身分執行：
+
+   ```powershell
+   # 掛在網站根目錄
+   .\scripts\setup-ad-login.ps1 -SiteName "Default Web Site"
+
+   # 掛在 http://server/building_platform
+   .\scripts\setup-ad-login.ps1 -SiteName "Default Web Site" -AppPath "building_platform"
+   ```
+
+   設定完成後執行 `iisreset /restart`。
+3. 確認已安裝 `ldap3`（AD 帳密登入用），並在 `web.config` 的 `appSettings` 填好 `AD_SERVER`。
+   離線機器可先在有網路的機器 `pip download ldap3 -d wheels`，再到目標機器
+   `pip install --no-index --find-links wheels ldap3`。
+4. 確認 Python 與 `wfastcgi.py` 路徑與 `web.config` 一致。
+5. 確認 `PYTHONPATH` 指向專案根目錄。
+6. 確認 IIS App Pool 身分有權限讀取專案目錄。
+7. 確認 IIS App Pool 身分有權限寫入：
    - `data.json`
    - `access_log.txt`
    - `app.log`
+   - `secret_key.txt`（登入 session 金鑰，第一次啟動時自動產生；
+     若不想給寫入權限，改在 `web.config` 填 `APP_SECRET_KEY`）
    - `uploads/`
    - `processed/`
    - `data_backups/`
-7. 確認 `permissions.json` 已設定正式 AD 帳號。
-8. 若使用 Windows 整合驗證，`app.py` 會從 `REMOTE_USER` 取得使用者帳號。
-9. 若 admin 要上傳大檔案，需確認 IIS request limit 與 Flask `MAX_CONTENT_LENGTH` 設定，目前 Flask 限制為 50MB。
+8. 確認 `permissions.json` 已設定正式 AD 帳號。
+9. Windows 整合驗證的身分來源依序為 `REMOTE_USER` / `LOGON_USER` / `AUTH_USER`；
+   若 IIS 改用 `forwardWindowsAuthToken` 傳 token，`/auth/sso` 也會解析
+   `X-IIS-WindowsAuthToken`（讀 token 的 SID 反查帳號）。
+10. 網域內電腦若仍會跳出 Windows 帳密視窗，請把平台網址加入瀏覽器的
+    「近端內部網路」信任區（可用 GPO 統一派送）；沒加入時仍可用登入畫面輸入 AD 帳密。
+11. 若 admin 要上傳大檔案，需確認 IIS request limit 與 Flask `MAX_CONTENT_LENGTH` 設定，目前 Flask 限制為 50MB。
 
 ### 部署前自動檢查
 

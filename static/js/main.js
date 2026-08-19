@@ -691,6 +691,14 @@ const init = async () => {
         const meRes = await fetch(apiUrl('/api/me'), { cache: 'no-store' });
         if (meRes.ok) {
             state.currentUser = await meRes.json();
+        } else if (meRes.status === 403) {
+            // 後端已無身分 (例如 session 過期、或使用者按掉 Windows 驗證視窗)：
+            // 導去登入頁，不要停在載入中的畫面。
+            const body = await meRes.json().catch(() => ({}));
+            if (body.error === 'unauthenticated') {
+                window.location.replace(body.login_url || apiUrl('/login'));
+                return;
+            }
         }
 
         await loadData();

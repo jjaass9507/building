@@ -1,5 +1,13 @@
 import { formatArea, formatPct, getCellStyle } from './utils.js';
 
+// 帳號等外部字串塞進樣板前先跳脫，避免破壞 HTML
+const escapeAttr = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
 // --- 全域樣式設定 (參數化維護) ---
 const STYLE_CONFIG = {
     // [1] 廠棟排序清單
@@ -173,10 +181,23 @@ export const renderHeader = (state, allBuildingNames, totals, processedData) => 
     };
 
     const renderBuildingBtn = (b, type) => `
-        <button onclick="window.app.toggleBuilding('${b}')" 
+        <button onclick="window.app.toggleBuilding('${b}')"
             class="px-3 py-1 text-[13px] font-bold rounded-full border transition-all whitespace-nowrap ${btnClass(filterBuildings.includes(b), type)}">
             ${b}
         </button>`;
+
+    // 目前登入者 + 登出 (登出後會回到登入畫面，可改用其他 AD 帳號登入)
+    const currentUser = state.currentUser;
+    const userChip = !currentUser?.username ? '' : `
+        <div class="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-1 rounded-md shadow-sm">
+            <i data-lucide="user-round" class="w-4 h-4 text-slate-400 dark:text-slate-500"></i>
+            <span class="font-mono text-[15px] font-bold text-slate-700 dark:text-slate-200">${escapeAttr(currentUser.username)}</span>
+            <span class="text-[13px] font-bold text-slate-400 dark:text-slate-500 uppercase">${escapeAttr(currentUser.role || '')}</span>
+            <a href="${escapeAttr(currentUser.logout_url || `${window.APP_BASE || ''}/logout`)}" title="登出 / 切換帳號"
+               class="ml-1 border-l border-slate-200 dark:border-slate-700 pl-2 text-slate-400 hover:text-red-500 transition-colors">
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+            </a>
+        </div>`;
 
     return `
         <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm flex-none transition-colors">
@@ -211,6 +232,7 @@ export const renderHeader = (state, allBuildingNames, totals, processedData) => 
                                     <i data-lucide="${isDarkMode ? 'sun' : 'moon'}" class="w-5 h-5"></i>
                                 </button>
                             </div>
+                            ${userChip}
                         </div>
                     </div>
 
