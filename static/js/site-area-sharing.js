@@ -140,52 +140,71 @@ function buildingIncluded(building, includeUnfinished) {
   return floors.some(floor => String(floor?.['狀態'] || '').trim() !== '未成廠');
 }
 
+// 單位與「包含未成廠」直接取主程式公開的狀態 (window.APP_STATE)，
+// 標題列的 data-unit / data-include-unfinished 只是後備。
+//
+// 之前是掃 header 的文字反推單位，但標題列本來就有「坪」這顆切換按鈕，
+// 文字永遠含有「坪」，導致不論選 M² 或坪，總基地面積都被換算成坪。
 function getHeaderUnit() {
-  const header = document.querySelector('header');
-  const floorMetric = Array.from(header?.querySelectorAll('div') || [])
-    .find(el => el.textContent.includes('總樓地板:'));
-  const text = floorMetric?.textContent || '';
-  return text.includes('坪') ? 'ping' : 'm2';
+  const stateUnit = window.APP_STATE?.unit;
+  if (stateUnit === 'ping' || stateUnit === 'm2') return stateUnit;
+
+  const headerUnit = document.querySelector('header')?.dataset?.unit;
+  return headerUnit === 'ping' ? 'ping' : 'm2';
 }
 
 function getIncludeUnfinishedState() {
-  return Boolean(document.querySelector('header input[type="checkbox"]')?.checked);
+  if (typeof window.APP_STATE?.includeUnfinished === 'boolean') {
+    return window.APP_STATE.includeUnfinished;
+  }
+  return document.querySelector('header')?.dataset?.includeUnfinished === 'true';
+}
+
+/**
+ * 基地面積加總：同一個共用基地群組只計算一次。
+ *
+ * @param {string[]} names      要加總的棟別名稱
+ * @param {Function} baseAreaOf 取得某棟別基地面積 (M²) 的函式
+ */
+function sumBaseArea(names, baseAreaOf) {
+  const included = new Set(names.filter(Boolean));
+  const sharedMap = getSharedMap();
+  const counted = new Set();
+  let total = 0;
+
+  included.forEach(name => {
+    const shared = sharedMap.get(name);
+
+    if (shared) {
+      const groupNames = shared.group.buildings.filter(item => included.has(item));
+      if (groupNames.length > 1) {
+        const countKey = `group:${shared.group.group_id}:${[...groupNames].sort().join('|')}`;
+        if (counted.has(countKey)) return;
+        counted.add(countKey);
+
+        const override = toNumber(shared.group.site_area_m2);
+        total += override > 0
+          ? override
+          : Math.max(...groupNames.map(item => toNumber(baseAreaOf(item))), 0);
+        return;
+      }
+    }
+
+    total += toNumber(baseAreaOf(name));
+  });
+
+  return total;
 }
 
 function calculateTotalSiteArea() {
   const includeUnfinished = getIncludeUnfinishedState();
   const eligible = rawData.filter(building => buildingIncluded(building, includeUnfinished));
-  const eligibleNames = new Set(eligible.map(building => String(building?.['棟別'] || '')));
   const byName = new Map(eligible.map(building => [String(building?.['棟別'] || ''), building]));
-  const sharedMap = getSharedMap();
-  const counted = new Set();
-  let total = 0;
 
-  eligible.forEach(building => {
-    const name = String(building?.['棟別'] || '');
-    if (!name) return;
-    const shared = sharedMap.get(name);
-
-    if (shared) {
-      const groupNames = shared.group.buildings.filter(item => eligibleNames.has(item));
-      if (groupNames.length > 1) {
-        const countKey = `group:${shared.group.group_id}:${groupNames.sort().join('|')}`;
-        if (counted.has(countKey)) return;
-        counted.add(countKey);
-
-        const override = toNumber(shared.group.site_area_m2);
-        const groupArea = override > 0
-          ? override
-          : Math.max(...groupNames.map(item => toNumber(byName.get(item)?.['基地面積(M2)'])), 0);
-        total += groupArea;
-        return;
-      }
-    }
-
-    total += toNumber(building?.['基地面積(M2)']);
-  });
-
-  return total;
+  return sumBaseArea(
+    Array.from(byName.keys()),
+    name => byName.get(name)?.['基地面積(M2)']
+  );
 }
 
 function injectTotalSiteArea() {
@@ -430,6 +449,9 @@ function installObserver() {
 
 async function init() {
   await ensureDataLoaded();
+  // 讓比較表等其他畫面也能用同一套「共用基地只算一次」的加總規則，
+  // 避免標題列的總基地面積和比較表的基地面積對不起來。
+  window.APP_SITE_AREA = { sumBaseArea };
   renderFloatingButton();
   installObserver();
   applySiteAreaEnhancements();

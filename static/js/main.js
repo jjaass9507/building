@@ -515,6 +515,13 @@ const render = () => {
         ? appData.processed
         : appData.processed.filter(d => d.status !== '未成廠' || isHiddenMatrixFloor(d.floor));
 
+    // 其他模組 (基地面積共用設定等) 需要知道目前的單位與未成廠開關。
+    // 以前是去 header 反推，會誤判 (標題列本來就有「坪」按鈕)，改成直接公開狀態。
+    window.APP_STATE = {
+        unit: state.unit,
+        includeUnfinished: state.includeUnfinished
+    };
+
     const totalArea = dataForTotal.reduce((acc, curr) => acc + (curr.area || 0), 0);
     const totalClean = dataForTotal.reduce((acc, curr) => acc + (curr.cleanRoomArea || 0), 0);
     const totals = {
@@ -555,7 +562,8 @@ const render = () => {
         ${renderAdminUploadPanel()}
         <main class="flex-1 p-2 md:p-4 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
             ${state.isCompareTableOpen
-                ? renderCompareTable(state, activeBuildings, dataForTotal, appData.meta, appData.sortedFloors)
+                // 比較表要看到完整規劃，未成廠也要列入，不受標題列「包含未成廠」開關影響。
+                ? renderCompareTable(state, activeBuildings, appData.processed, appData.meta, appData.sortedFloors)
                 : renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}

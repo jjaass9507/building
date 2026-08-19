@@ -200,7 +200,8 @@ export const renderHeader = (state, allBuildingNames, totals, processedData) => 
         </div>`;
 
     return `
-        <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm flex-none transition-colors">
+        <header data-unit="${unit}" data-include-unfinished="${includeUnfinished}"
+            class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm flex-none transition-colors">
             <div class="max-w-[1920px] mx-auto px-4 py-3">
                 <div class="flex flex-col gap-3">
                     <div class="flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -480,6 +481,14 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
             </td>`;
     };
 
+    // 比較表一律列出未成廠 (規劃中的量體也要比較)，但標示出來以免和已成廠混淆。
+    const unfinishedTag = (zones) => {
+        const unfinished = zones.filter(z => z.status === '未成廠').length;
+        if (unfinished === 0) return '';
+        const label = unfinished === zones.length ? '未成廠' : '部分未成廠';
+        return `<span class="shrink-0 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full text-[11px] font-bold">${label}</span>`;
+    };
+
     const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, isTotalRow = false } = {}) => {
         const totalArea = sumFor(zones, 'area');
         const rowCls = isTotalRow
@@ -503,6 +512,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                             ? `<i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}" class="w-4 h-4 text-slate-400 shrink-0"></i>`
                             : `<span class="w-4 shrink-0 inline-block"></span>`}
                         ${labelHtml}
+                        ${isTotalRow ? '' : unfinishedTag(zones)}
                     </div>
                 </td>
                 <td class="px-4 py-3 text-right align-middle border-l border-slate-100 dark:border-slate-800/70">
@@ -516,7 +526,13 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
     };
 
     const allZones = processedData.filter(d => sortedActive.includes(d.building));
-    const totalBaseArea = sortedActive.reduce((acc, b) => acc + Number(buildingMeta[b]?.baseArea || 0), 0);
+
+    // 基地面積合計採用和標題列「總基地面積」相同的規則：共用基地群組只計算一次。
+    // (site-area-sharing.js 載入後會提供 sumBaseArea；還沒載入時退回單純相加)
+    const baseAreaOf = (name) => Number(buildingMeta[name]?.baseArea || 0);
+    const totalBaseArea = typeof window.APP_SITE_AREA?.sumBaseArea === 'function'
+        ? window.APP_SITE_AREA.sumBaseArea(sortedActive, baseAreaOf)
+        : sortedActive.reduce((acc, b) => acc + baseAreaOf(b), 0);
 
     const summaryRow = renderRow('全廠棟', allZones, { baseArea: totalBaseArea, isTotalRow: true });
 
@@ -534,7 +550,11 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
             return renderRow(floor, fZones, { indent: 2 });
         }).join('');
 
-        return bRow + floorRows;
+        // 樓層未定 (ALL) 的量體有計入廠棟合計，明細也要列出來，展開後才加得起來。
+        const undecidedZones = bZones.filter(z => isAllFloor(z.floor));
+        const undecidedRow = undecidedZones.length ? renderRow('樓層未定', undecidedZones, { indent: 2 }) : '';
+
+        return bRow + floorRows + undecidedRow;
     }).join('');
 
     const modeBtn = (mode, label) => `
@@ -547,7 +567,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                     <div class="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                         <i data-lucide="table-2" class="w-4 h-4 text-slate-400"></i> 面積比較表
                     </div>
-                    <span class="text-[13px] text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 點擊廠棟列展開樓層明細</span>
+                    <span class="text-[13px] text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 含未成廠 ・ 點擊廠棟列展開樓層明細</span>
                 </div>
                 <div class="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-sm p-0.5">
                     ${modeBtn('value', '實際數值')}
@@ -559,7 +579,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                     <thead class="bg-slate-100 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400 sticky top-0 z-10 border-b-2 border-slate-300 dark:border-slate-700">
                         <tr>
                             <th class="px-4 py-3 text-left text-[13px] font-bold uppercase tracking-wider">廠棟 / 樓層</th>
-                            <th class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">基地面積</th>
+                            <th title="全廠棟合計時，共用基地群組只計算一次" class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">基地面積</th>
                             <th class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">樓地板面積</th>
                             ${COMPARE_METRICS.map(m => `
                                 <th class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">
