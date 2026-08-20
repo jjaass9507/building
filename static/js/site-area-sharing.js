@@ -26,7 +26,8 @@ let rawData = [];
 let utilityData = null;
 let siteConfig = null;
 let isEditorOpen = false;
-let observerInstalled = false;
+let observer = null;
+let lastSignature = '';
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -140,52 +141,71 @@ function buildingIncluded(building, includeUnfinished) {
   return floors.some(floor => String(floor?.['狀態'] || '').trim() !== '未成廠');
 }
 
+// 單位與「包含未成廠」直接取主程式公開的狀態 (window.APP_STATE)，
+// 標題列的 data-unit / data-include-unfinished 只是後備。
+//
+// 之前是掃 header 的文字反推單位，但標題列本來就有「坪」這顆切換按鈕，
+// 文字永遠含有「坪」，導致不論選 M² 或坪，總基地面積都被換算成坪。
 function getHeaderUnit() {
-  const header = document.querySelector('header');
-  const floorMetric = Array.from(header?.querySelectorAll('div') || [])
-    .find(el => el.textContent.includes('總樓地板:'));
-  const text = floorMetric?.textContent || '';
-  return text.includes('坪') ? 'ping' : 'm2';
+  const stateUnit = window.APP_STATE?.unit;
+  if (stateUnit === 'ping' || stateUnit === 'm2') return stateUnit;
+
+  const headerUnit = document.querySelector('header')?.dataset?.unit;
+  return headerUnit === 'ping' ? 'ping' : 'm2';
 }
 
 function getIncludeUnfinishedState() {
-  return Boolean(document.querySelector('header input[type="checkbox"]')?.checked);
+  if (typeof window.APP_STATE?.includeUnfinished === 'boolean') {
+    return window.APP_STATE.includeUnfinished;
+  }
+  return document.querySelector('header')?.dataset?.includeUnfinished === 'true';
+}
+
+/**
+ * 基地面積加總：同一個共用基地群組只計算一次。
+ *
+ * @param {string[]} names      要加總的棟別名稱
+ * @param {Function} baseAreaOf 取得某棟別基地面積 (M²) 的函式
+ */
+function sumBaseArea(names, baseAreaOf) {
+  const included = new Set(names.filter(Boolean));
+  const sharedMap = getSharedMap();
+  const counted = new Set();
+  let total = 0;
+
+  included.forEach(name => {
+    const shared = sharedMap.get(name);
+
+    if (shared) {
+      const groupNames = shared.group.buildings.filter(item => included.has(item));
+      if (groupNames.length > 1) {
+        const countKey = `group:${shared.group.group_id}:${[...groupNames].sort().join('|')}`;
+        if (counted.has(countKey)) return;
+        counted.add(countKey);
+
+        const override = toNumber(shared.group.site_area_m2);
+        total += override > 0
+          ? override
+          : Math.max(...groupNames.map(item => toNumber(baseAreaOf(item))), 0);
+        return;
+      }
+    }
+
+    total += toNumber(baseAreaOf(name));
+  });
+
+  return total;
 }
 
 function calculateTotalSiteArea() {
   const includeUnfinished = getIncludeUnfinishedState();
   const eligible = rawData.filter(building => buildingIncluded(building, includeUnfinished));
-  const eligibleNames = new Set(eligible.map(building => String(building?.['棟別'] || '')));
   const byName = new Map(eligible.map(building => [String(building?.['棟別'] || ''), building]));
-  const sharedMap = getSharedMap();
-  const counted = new Set();
-  let total = 0;
 
-  eligible.forEach(building => {
-    const name = String(building?.['棟別'] || '');
-    if (!name) return;
-    const shared = sharedMap.get(name);
-
-    if (shared) {
-      const groupNames = shared.group.buildings.filter(item => eligibleNames.has(item));
-      if (groupNames.length > 1) {
-        const countKey = `group:${shared.group.group_id}:${groupNames.sort().join('|')}`;
-        if (counted.has(countKey)) return;
-        counted.add(countKey);
-
-        const override = toNumber(shared.group.site_area_m2);
-        const groupArea = override > 0
-          ? override
-          : Math.max(...groupNames.map(item => toNumber(byName.get(item)?.['基地面積(M2)'])), 0);
-        total += groupArea;
-        return;
-      }
-    }
-
-    total += toNumber(building?.['基地面積(M2)']);
-  });
-
-  return total;
+  return sumBaseArea(
+    Array.from(byName.keys()),
+    name => byName.get(name)?.['基地面積(M2)']
+  );
 }
 
 function injectTotalSiteArea() {
@@ -212,6 +232,11 @@ function injectTotalSiteArea() {
   cleanMetric.insertAdjacentElement('afterend', wrapper);
 }
 
+// 共用基地標記用的鏈結圖示。
+// 直接內嵌 SVG，不用 data-lucide，否則每次插入標記都要再跑一次
+// lucide.createIcons() 掃描整份文件 (矩陣有上萬個節點，成本很高)。
+const LINK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg>';
+
 function injectBuildingSharedBadges() {
   const matrix = document.getElementById('matrix-scroll-container');
   if (!matrix) return;
@@ -220,26 +245,53 @@ function injectBuildingSharedBadges() {
   const sharedMap = getSharedMap();
   if (!sharedMap.size) return;
 
-  sharedMap.forEach(({ others }, building) => {
-    const candidates = Array.from(matrix.querySelectorAll('h1,h2,h3,h4,span,div'))
-      .filter(el => normalizeText(el.textContent) === normalizeText(building));
+  // 矩陣的廠棟標題有 data-building-name，直接指名選取即可。
+  // (舊版沒有這個屬性時才退回全表掃描比對文字)
+  const hasNameAttr = Boolean(matrix.querySelector('[data-building-name]'));
 
-    candidates.slice(0, 3).forEach(el => {
+  sharedMap.forEach(({ others }, building) => {
+    const targets = hasNameAttr
+      ? Array.from(matrix.querySelectorAll(`[data-building-name="${CSS.escape(building)}"]`))
+      : Array.from(matrix.querySelectorAll('h1,h2,h3,h4,span,div'))
+          .filter(el => normalizeText(el.textContent) === normalizeText(building))
+          .slice(0, 3);
+
+    targets.forEach(el => {
       const badge = document.createElement('div');
       badge.setAttribute('data-site-area-share-badge', 'true');
       badge.className = 'mt-1 inline-flex max-w-[190px] items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300';
       badge.title = `基地面積與 ${others.join('、')} 共用，總基地面積不重複計算`;
-      badge.innerHTML = `<i data-lucide="link-2" class="w-3 h-3 shrink-0"></i><span class="truncate">基地共用：${escapeHtml(others.join(' / '))}</span>`;
+      badge.innerHTML = `${LINK_ICON_SVG}<span class="truncate">基地共用：${escapeHtml(others.join(' / '))}</span>`;
       el.insertAdjacentElement('afterend', badge);
     });
   });
+}
 
-  window.lucide?.createIcons?.();
+function currentSignature() {
+  const groups = getResolvedGroups()
+    .map(group => `${group.group_id}:${group.buildings.join('|')}:${group.site_area_m2}`)
+    .join(';');
+  return [getHeaderUnit(), getIncludeUnfinishedState(), rawData.length, groups].join('#');
 }
 
 function applySiteAreaEnhancements() {
-  injectTotalSiteArea();
-  injectBuildingSharedBadges();
+  const header = document.querySelector('header');
+  const matrix = document.getElementById('matrix-scroll-container');
+
+  const totalInPlace = Boolean(header?.querySelector('[data-site-area-total="true"]'));
+  const badgesInPlace = !matrix || !getSharedMap().size
+    || Boolean(matrix.querySelector('[data-site-area-share-badge="true"]'));
+
+  // 畫面沒重繪、設定也沒變，就什麼都不用做。
+  // 否則自己插入的節點會再次觸發 MutationObserver，變成無止盡的重繪迴圈。
+  const signature = currentSignature();
+  if (signature === lastSignature && totalInPlace && badgesInPlace) return;
+  lastSignature = signature;
+
+  withObserverPaused(() => {
+    injectTotalSiteArea();
+    injectBuildingSharedBadges();
+  });
 }
 
 function renderFloatingButton() {
@@ -416,20 +468,38 @@ async function ensureDataLoaded(force = false) {
   siteConfig = normalizeConfig(utilityData[CONFIG_KEY]);
 }
 
+const OBSERVER_OPTIONS = { childList: true, subtree: true };
+
+// 插入自己的節點時先停掉 observer，做完再接回去，
+// 這樣才不會被自己的 DOM 變動再次喚醒。
+function withObserverPaused(fn) {
+  const app = document.getElementById('app');
+  if (observer) observer.disconnect();
+  try {
+    fn();
+  } finally {
+    if (observer && app) observer.observe(app, OBSERVER_OPTIONS);
+  }
+}
+
 function installObserver() {
-  if (observerInstalled) return;
+  if (observer) return;
   const app = document.getElementById('app');
   if (!app) return;
-  observerInstalled = true;
+
   let timer = null;
-  new MutationObserver(() => {
+  observer = new MutationObserver(() => {
     clearTimeout(timer);
     timer = setTimeout(applySiteAreaEnhancements, 80);
-  }).observe(app, { childList: true, subtree: true });
+  });
+  observer.observe(app, OBSERVER_OPTIONS);
 }
 
 async function init() {
   await ensureDataLoaded();
+  // 讓比較表等其他畫面也能用同一套「共用基地只算一次」的加總規則，
+  // 避免標題列的總基地面積和比較表的基地面積對不起來。
+  window.APP_SITE_AREA = { sumBaseArea };
   renderFloatingButton();
   installObserver();
   applySiteAreaEnhancements();

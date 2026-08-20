@@ -1,5 +1,13 @@
 import { formatArea, formatPct, getCellStyle } from './utils.js';
 
+// 帳號等外部字串塞進樣板前先跳脫，避免破壞 HTML
+const escapeAttr = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
 // --- 全域樣式設定 (參數化維護) ---
 const STYLE_CONFIG = {
     // [1] 廠棟排序清單
@@ -173,13 +181,27 @@ export const renderHeader = (state, allBuildingNames, totals, processedData) => 
     };
 
     const renderBuildingBtn = (b, type) => `
-        <button onclick="window.app.toggleBuilding('${b}')" 
+        <button onclick="window.app.toggleBuilding('${b}')"
             class="px-3 py-1 text-[13px] font-bold rounded-full border transition-all whitespace-nowrap ${btnClass(filterBuildings.includes(b), type)}">
             ${b}
         </button>`;
 
+    // 目前登入者 + 登出 (登出後會回到登入畫面，可改用其他 AD 帳號登入)
+    const currentUser = state.currentUser;
+    const userChip = !currentUser?.username ? '' : `
+        <div class="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 px-3 py-1 rounded-md shadow-sm">
+            <i data-lucide="user-round" class="w-4 h-4 text-slate-400 dark:text-slate-500"></i>
+            <span class="font-mono text-[15px] font-bold text-slate-700 dark:text-slate-200">${escapeAttr(currentUser.username)}</span>
+            <span class="text-[13px] font-bold text-slate-400 dark:text-slate-500 uppercase">${escapeAttr(currentUser.role || '')}</span>
+            <a href="${escapeAttr(currentUser.logout_url || `${window.APP_BASE || ''}/logout`)}" title="登出 / 切換帳號"
+               class="ml-1 border-l border-slate-200 dark:border-slate-700 pl-2 text-slate-400 hover:text-red-500 transition-colors">
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+            </a>
+        </div>`;
+
     return `
-        <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm flex-none transition-colors">
+        <header data-unit="${unit}" data-include-unfinished="${includeUnfinished}"
+            class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 shadow-sm flex-none transition-colors">
             <div class="max-w-[1920px] mx-auto px-4 py-3">
                 <div class="flex flex-col gap-3">
                     <div class="flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -211,6 +233,7 @@ export const renderHeader = (state, allBuildingNames, totals, processedData) => 
                                     <i data-lucide="${isDarkMode ? 'sun' : 'moon'}" class="w-5 h-5"></i>
                                 </button>
                             </div>
+                            ${userChip}
                         </div>
                     </div>
 
@@ -387,7 +410,7 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                     return `
                     <div class="flex flex-col">
                         <div onclick="window.app.selectBuilding('${bldg}')" class="flex flex-col justify-between items-center ${HEADER_HEIGHT} text-center border-b-4 border-slate-700 dark:border-blue-600 sticky top-0 z-30 w-[40vw] md:w-72 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800 pt-1 pb-1 shadow-sm">
-                            <div class="flex items-center gap-1.5 text-lg md:text-2xl font-black text-slate-800 dark:text-slate-100">${bldg} <i data-lucide="info" class="w-3.5 h-3.5 text-slate-400"></i></div>
+                            <div data-building-name="${bldg}" class="flex items-center gap-1.5 text-lg md:text-2xl font-black text-slate-800 dark:text-slate-100">${bldg} <i data-lucide="info" class="w-3.5 h-3.5 text-slate-400"></i></div>
                             <div class="flex flex-col gap-1 w-full px-2">
                                 <div class="flex justify-between items-center px-2 py-0.5 bg-slate-50 dark:bg-slate-800 rounded border border-slate-100 dark:border-slate-700">
                                     <span class="${HEADER_INFO_LABEL} font-bold text-slate-700 dark:text-slate-400">基地面積</span>
@@ -458,6 +481,14 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
             </td>`;
     };
 
+    // 比較表一律列出未成廠 (規劃中的量體也要比較)，但標示出來以免和已成廠混淆。
+    const unfinishedTag = (zones) => {
+        const unfinished = zones.filter(z => z.status === '未成廠').length;
+        if (unfinished === 0) return '';
+        const label = unfinished === zones.length ? '未成廠' : '部分未成廠';
+        return `<span class="shrink-0 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded-full text-[11px] font-bold">${label}</span>`;
+    };
+
     const renderRow = (label, zones, { baseArea = null, indent = 0, expandable = false, expanded = false, isTotalRow = false } = {}) => {
         const totalArea = sumFor(zones, 'area');
         const rowCls = isTotalRow
@@ -481,6 +512,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                             ? `<i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}" class="w-4 h-4 text-slate-400 shrink-0"></i>`
                             : `<span class="w-4 shrink-0 inline-block"></span>`}
                         ${labelHtml}
+                        ${isTotalRow ? '' : unfinishedTag(zones)}
                     </div>
                 </td>
                 <td class="px-4 py-3 text-right align-middle border-l border-slate-100 dark:border-slate-800/70">
@@ -494,7 +526,13 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
     };
 
     const allZones = processedData.filter(d => sortedActive.includes(d.building));
-    const totalBaseArea = sortedActive.reduce((acc, b) => acc + Number(buildingMeta[b]?.baseArea || 0), 0);
+
+    // 基地面積合計採用和標題列「總基地面積」相同的規則：共用基地群組只計算一次。
+    // (site-area-sharing.js 載入後會提供 sumBaseArea；還沒載入時退回單純相加)
+    const baseAreaOf = (name) => Number(buildingMeta[name]?.baseArea || 0);
+    const totalBaseArea = typeof window.APP_SITE_AREA?.sumBaseArea === 'function'
+        ? window.APP_SITE_AREA.sumBaseArea(sortedActive, baseAreaOf)
+        : sortedActive.reduce((acc, b) => acc + baseAreaOf(b), 0);
 
     const summaryRow = renderRow('全廠棟', allZones, { baseArea: totalBaseArea, isTotalRow: true });
 
@@ -512,7 +550,11 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
             return renderRow(floor, fZones, { indent: 2 });
         }).join('');
 
-        return bRow + floorRows;
+        // 樓層未定 (ALL) 的量體有計入廠棟合計，明細也要列出來，展開後才加得起來。
+        const undecidedZones = bZones.filter(z => isAllFloor(z.floor));
+        const undecidedRow = undecidedZones.length ? renderRow('樓層未定', undecidedZones, { indent: 2 }) : '';
+
+        return bRow + floorRows + undecidedRow;
     }).join('');
 
     const modeBtn = (mode, label) => `
@@ -525,7 +567,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                     <div class="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                         <i data-lucide="table-2" class="w-4 h-4 text-slate-400"></i> 面積比較表
                     </div>
-                    <span class="text-[13px] text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 點擊廠棟列展開樓層明細</span>
+                    <span class="text-[13px] text-slate-400 dark:text-slate-500">單位 <span class="font-mono">${unitLabel}</span> ・ 含未成廠 ・ 點擊廠棟列展開樓層明細</span>
                 </div>
                 <div class="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-sm p-0.5">
                     ${modeBtn('value', '實際數值')}
@@ -537,7 +579,7 @@ export const renderCompareTable = (state, activeBuildings, processedData, buildi
                     <thead class="bg-slate-100 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400 sticky top-0 z-10 border-b-2 border-slate-300 dark:border-slate-700">
                         <tr>
                             <th class="px-4 py-3 text-left text-[13px] font-bold uppercase tracking-wider">廠棟 / 樓層</th>
-                            <th class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">基地面積</th>
+                            <th title="全廠棟合計時，共用基地群組只計算一次" class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">基地面積</th>
                             <th class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">樓地板面積</th>
                             ${COMPARE_METRICS.map(m => `
                                 <th class="px-4 py-3 text-right text-[13px] font-bold uppercase tracking-wider border-l border-slate-200 dark:border-slate-700">

@@ -247,6 +247,15 @@ if (Test-Path $webConfigPath) {
         } else {
             Add-Result -Status WARN -Check "web.config 有設定 PYTHONPATH" -Detail "appSettings 內找不到 PYTHONPATH"
         }
+
+        # AD 帳密登入 (使用者按掉 Windows 驗證視窗時的備援登入方式) 需要 AD_SERVER
+        $adServerValue = ($appSettings | Where-Object { $_.key -eq 'AD_SERVER' }).value
+        if ($adServerValue) {
+            Add-Result -Status PASS -Check "web.config 有設定 AD_SERVER" -Detail $adServerValue
+        } else {
+            Add-Result -Status WARN -Check "web.config 有設定 AD_SERVER" `
+                -Detail "未設定 AD_SERVER，Windows 單一登入仍可用，但登入畫面的『AD 帳號密碼登入』會無法使用"
+        }
     } catch {
         Add-Result -Status FAIL -Check "web.config 可正確解析" -Detail $_.Exception.Message
     }
@@ -494,6 +503,32 @@ if ($SiteName) {
             Add-Result -Status PASS -Check "IIS 網站已啟用 Windows Authentication"
         } else {
             Add-Result -Status FAIL -Check "IIS 網站已啟用 Windows Authentication" -Detail "目前是停用狀態"
+        }
+
+        # 登入流程需要「根目錄允許匿名」＋「/auth/sso 關閉匿名」，
+        # 否則使用者按掉 Windows 帳密視窗時會看到 IIS 的 401 錯誤頁，而不是本系統的登入畫面。
+        $rootAnon = Get-WebConfigurationProperty -Filter '/system.webServer/security/authentication/anonymousAuthentication' `
+            -Name enabled -PSPath "IIS:\Sites\$SiteName"
+        if ($rootAnon.Value) {
+            Add-Result -Status PASS -Check "IIS 網站已啟用匿名驗證 (登入畫面備援用)"
+        } else {
+            Add-Result -Status FAIL -Check "IIS 網站已啟用匿名驗證 (登入畫面備援用)" `
+                -Detail "目前是停用狀態，使用者按掉 Windows 帳密視窗會看到 IIS 錯誤頁。請執行 scripts\setup-ad-login.ps1"
+        }
+
+        try {
+            $ssoAnon = Get-WebConfigurationProperty -Filter '/system.webServer/security/authentication/anonymousAuthentication' `
+                -Name enabled -PSPath "MACHINE/WEBROOT/APPHOST" -Location "$SiteName/auth/sso"
+            if (-not $ssoAnon.Value) {
+                Add-Result -Status PASS -Check "/auth/sso 已關閉匿名驗證 (單一登入用)"
+            } else {
+                Add-Result -Status WARN -Check "/auth/sso 已關閉匿名驗證 (單一登入用)" `
+                    -Detail ("匿名仍為啟用，Windows 單一登入不會生效，使用者每次都要手動輸入 AD 帳密。" +
+                             "請執行 scripts\setup-ad-login.ps1；若本平台是掛在子應用程式底下，" +
+                             "請確認的是『<網站>/<應用程式>/auth/sso』這個路徑")
+            }
+        } catch {
+            Add-Result -Status WARN -Check "/auth/sso 驗證設定檢查" -Detail $_.Exception.Message
         }
     } catch {
         Add-Result -Status WARN -Check "IIS 網站設定檢查 ($SiteName)" -Detail $_.Exception.Message
