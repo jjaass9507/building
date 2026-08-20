@@ -100,6 +100,16 @@ const sortBuildings = (names) => {
 
 const getLabelByState = (pct, val, type) => (pct < 12) ? '' : (type === 'pct' ? `${Math.round(pct)}%` : val);
 
+// 矩陣格子的「選取中／未選取」樣式。
+// main.js 切換選取時直接改這些 class，不必為了換一格重繪整個矩陣，
+// 所以兩邊必須用同一份定義。
+export const CELL_SELECTION = {
+    outerOn: ['z-20'],
+    outerOff: ['z-0'],
+    innerOn: ['bg-blue-50/80', 'dark:bg-blue-900/30', 'ring-2', 'ring-blue-500', 'ring-inset'],
+    innerOff: ['hover:bg-slate-50', 'dark:hover:bg-slate-800']
+};
+
 // ===============================================
 // 1. 生成單一格子內容 (Matrix Cell) - 強制重算版
 // ===============================================
@@ -439,7 +449,9 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                             const commonClasses = `${ROW_HEIGHT} w-[40vw] md:w-72 relative border-r border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900`;
                             if (!zoneData) return `<div class="${commonClasses} bg-slate-50/50 dark:bg-slate-800/30 diagonal-stripes opacity-60"></div>`;
                             const isSelected = state.selectedZone && state.selectedZone.id === zoneData.id;
-                            return `<div class="${commonClasses} ${isSelected ? 'z-20' : 'z-0'}"><div onclick="window.app.selectZone('${zoneData.id}')" class="w-full h-full px-1 py-1 cursor-pointer transition-all duration-200 ${isSelected ? 'bg-blue-50/80 dark:bg-blue-900/30 ring-2 ring-blue-500 ring-inset' : 'hover:bg-slate-50 dark:hover:bg-slate-800'}">${getCellContent(zoneData, state)}</div></div>`;
+                            const outer = isSelected ? CELL_SELECTION.outerOn : CELL_SELECTION.outerOff;
+                            const inner = isSelected ? CELL_SELECTION.innerOn : CELL_SELECTION.innerOff;
+                            return `<div data-zone-cell="${zoneData.id}" class="${commonClasses} ${outer.join(' ')}"><div onclick="window.app.selectZone('${zoneData.id}')" class="w-full h-full px-1 py-1 cursor-pointer transition-all duration-200 ${inner.join(' ')}">${getCellContent(zoneData, state)}</div></div>`;
                         }).join('')}
                     </div>`;
                 }).join('')}

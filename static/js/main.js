@@ -1,6 +1,6 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
-import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
+import { renderHeader, renderMatrix, renderPanel, renderCompareTable, CELL_SELECTION } from './components.js';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -35,7 +35,9 @@ let appData = {
     source: [],
     processed: [],
     meta: {},
-    sortedFloors: []
+    sortedFloors: [],
+    // 每次重新載入資料就 +1，分區重繪用它判斷「資料換了，全部都要重畫」
+    version: 0
 };
 
 const escapeHtml = (value) => String(value ?? '')
@@ -503,13 +505,83 @@ const loadData = async () => {
     appData.processed = result.processedData;
     appData.meta = result.buildingMeta;
     appData.sortedFloors = result.sortedFloorLabels;
+    appData.version += 1;
+};
+
+// --- 分區重繪 ---
+//
+// 以前每次操作 (連「打開側欄」「收合篩選」這種矩陣根本沒變的動作) 都是
+// 整個 #app.innerHTML 重寫。矩陣的 HTML 超過 1MB，光是重新解析就要 70ms 以上，
+// 加上重組字串，每個動作固定花掉 ~170ms。
+//
+// 改成把版面切成幾個固定區塊，各自記住「上次的輸入」，
+// 只有輸入真的變了的區塊才重組字串、重寫 DOM。
+// 外層用 display:contents，不影響原本的 flex 版面。
+
+let slots = null;
+let slotKeys = {};
+
+const ensureSlots = () => {
+    const app = document.getElementById('app');
+    if (slots && app.contains(slots.main)) return slots;
+
+    app.innerHTML = `
+        <div id="slot-header" style="display:contents"></div>
+        <div id="slot-upload" style="display:contents"></div>
+        <main id="slot-main" class="flex-1 p-2 md:p-4 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300"></main>
+        <div id="slot-panel" style="display:contents"></div>
+        <div id="slot-modal" style="display:contents"></div>`;
+
+    slotKeys = {};
+    slots = {
+        header: document.getElementById('slot-header'),
+        upload: document.getElementById('slot-upload'),
+        main: document.getElementById('slot-main'),
+        panel: document.getElementById('slot-panel'),
+        modal: document.getElementById('slot-modal')
+    };
+    return slots;
+};
+
+// key 要涵蓋該區塊「所有」會影響畫面的輸入，否則畫面會停在舊資料。
+const updateSlot = (name, key, buildHtml) => {
+    if (slotKeys[name] === key) return false;
+    slots[name].innerHTML = buildHtml();
+    slotKeys[name] = key;
+    return true;
+};
+
+// 選取樓層格子只是換兩個 div 的 class，不值得為它重繪整個矩陣。
+let renderedZoneId = '';
+
+const setCellSelected = (cell, selected) => {
+    const inner = cell.firstElementChild;
+    CELL_SELECTION.outerOn.forEach(c => cell.classList.toggle(c, selected));
+    CELL_SELECTION.outerOff.forEach(c => cell.classList.toggle(c, !selected));
+    if (!inner) return;
+    CELL_SELECTION.innerOn.forEach(c => inner.classList.toggle(c, selected));
+    CELL_SELECTION.innerOff.forEach(c => inner.classList.toggle(c, !selected));
+};
+
+const patchZoneSelection = () => {
+    const currentId = state.selectedZone?.id || '';
+    if (currentId === renderedZoneId) return;
+
+    const container = document.getElementById('matrix-scroll-container');
+    if (container) {
+        [renderedZoneId, currentId].filter(Boolean).forEach(id => {
+            const cell = container.querySelector(`[data-zone-cell="${CSS.escape(id)}"]`);
+            if (cell) setCellSelected(cell, id === currentId);
+        });
+    }
+    renderedZoneId = currentId;
 };
 
 const render = () => {
+    ensureSlots();
     const scrollContainer = document.getElementById('matrix-scroll-container');
     const savedScrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
     const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
-    const app = document.getElementById('app');
 
     const dataForTotal = state.includeUnfinished
         ? appData.processed
@@ -531,52 +603,94 @@ const render = () => {
 
     const allNames = Object.keys(appData.meta);
     const activeBuildings = state.filterBuildings.length > 0 ? state.filterBuildings : allNames;
+    const filterKey = activeBuildings.join(',');
 
-    const presentFloors = new Set();
-    activeBuildings.forEach(bldg => {
-        appData.processed
-            .filter(d => d.building === bldg && !isHiddenMatrixFloor(d.floor))
-            .forEach(d => presentFloors.add(d.floor));
-    });
-    const activeFloors = appData.sortedFloors.filter(f => presentFloors.has(f) && !isHiddenMatrixFloor(f));
+    const headerChanged = updateSlot(
+        'header',
+        [state.unit, state.displayMode, state.barLabelType, state.includeUnfinished, state.isDarkMode,
+         state.isFilterCollapsed, state.isCompareTableOpen, filterKey,
+         state.currentUser?.username, state.currentUser?.role, appData.version].join('|'),
+        () => injectHeaderButtons(renderHeader(state, allNames, totals, appData.processed))
+    );
 
-    const summaryMatrixRows = appData.processed.map(item => (
-        isHiddenMatrixFloor(item.floor)
-            ? { ...item, floor: '__BUILDING_SUMMARY__', isSummaryOnly: true }
-            : item
-    ));
+    const uploadChanged = updateSlot(
+        'upload',
+        [state.currentUser?.role, state.isUploading, JSON.stringify(state.uploadStatus)].join('|'),
+        renderAdminUploadPanel
+    );
 
-    const matrixData = state.displayMode === 'load'
-        ? summaryMatrixRows.map(item => ({ ...item, usageLabel: formatFloorLoadCell(item.floorLoad) }))
-        : summaryMatrixRows;
+    const mainChanged = updateSlot(
+        'main',
+        state.isCompareTableOpen
+            ? ['compare', state.unit, state.compareMode, state.compareExpanded.join(','), filterKey, appData.version].join('|')
+            // 選取的格子不列入 key：選取只是 class 切換，交給 patchZoneSelection 處理。
+            : ['matrix', state.unit, state.displayMode, state.barLabelType, filterKey, appData.version].join('|'),
+        () => {
+            // 比較表要看到完整規劃，未成廠也要列入，不受標題列「包含未成廠」開關影響。
+            if (state.isCompareTableOpen) {
+                return renderCompareTable(state, activeBuildings, appData.processed, appData.meta, appData.sortedFloors);
+            }
 
-    const dataMap = {};
-    matrixData
-        .filter(item => !item.isSummaryOnly)
-        .forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
+            const presentFloors = new Set();
+            activeBuildings.forEach(bldg => {
+                appData.processed
+                    .filter(d => d.building === bldg && !isHiddenMatrixFloor(d.floor))
+                    .forEach(d => presentFloors.add(d.floor));
+            });
+            const activeFloors = appData.sortedFloors.filter(f => presentFloors.has(f) && !isHiddenMatrixFloor(f));
 
-    const headerHtml = injectHeaderButtons(renderHeader(state, allNames, totals, appData.processed));
+            const summaryMatrixRows = appData.processed.map(item => (
+                isHiddenMatrixFloor(item.floor)
+                    ? { ...item, floor: '__BUILDING_SUMMARY__', isSummaryOnly: true }
+                    : item
+            ));
 
-    app.innerHTML = `
-        ${headerHtml}
-        ${renderAdminUploadPanel()}
-        <main class="flex-1 p-2 md:p-4 overflow-hidden flex flex-col relative bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
-            ${state.isCompareTableOpen
-                // 比較表要看到完整規劃，未成廠也要列入，不受標題列「包含未成廠」開關影響。
-                ? renderCompareTable(state, activeBuildings, appData.processed, appData.meta, appData.sortedFloors)
-                : renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
-        </main>
-        ${renderPanel(state, appData.meta, appData.processed)}
-        ${renderTrendModal()}
-    `;
+            const matrixData = state.displayMode === 'load'
+                ? summaryMatrixRows.map(item => ({ ...item, usageLabel: formatFloorLoadCell(item.floorLoad) }))
+                : summaryMatrixRows;
 
-    lucide.createIcons();
-    setTimeout(drawTrendChart, 0);
+            const dataMap = {};
+            matrixData
+                .filter(item => !item.isSummaryOnly)
+                .forEach(item => { dataMap[`${item.building}-${item.floor}`] = item; });
 
-    const newScrollContainer = document.getElementById('matrix-scroll-container');
-    if (newScrollContainer) {
-        newScrollContainer.scrollLeft = savedScrollLeft;
-        newScrollContainer.scrollTop = savedScrollTop;
+            return renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta);
+        }
+    );
+
+    const panelChanged = updateSlot(
+        'panel',
+        [state.selectedZone?.id, state.selectedBuilding, state.unit, appData.version].join('|'),
+        () => renderPanel(state, appData.meta, appData.processed)
+    );
+
+    const modalChanged = updateSlot(
+        'modal',
+        [state.isTrendOpen, state.trendMetric, state.unit, appData.version].join('|'),
+        renderTrendModal
+    );
+
+    if (mainChanged) {
+        // 剛重建的矩陣已經帶著目前的選取樣式了
+        renderedZoneId = state.selectedZone?.id || '';
+    } else {
+        patchZoneSelection();
+    }
+
+    if (headerChanged || uploadChanged || mainChanged || panelChanged || modalChanged) {
+        lucide.createIcons();
+    }
+
+    if (modalChanged || state.isTrendOpen) {
+        setTimeout(drawTrendChart, 0);
+    }
+
+    if (mainChanged) {
+        const newScrollContainer = document.getElementById('matrix-scroll-container');
+        if (newScrollContainer) {
+            newScrollContainer.scrollLeft = savedScrollLeft;
+            newScrollContainer.scrollTop = savedScrollTop;
+        }
     }
 };
 
