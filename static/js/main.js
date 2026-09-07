@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260907-readable';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260907-single-metric';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -514,6 +514,7 @@ const loadData = async () => {
 };
 
 const render = () => {
+    const saved3DScroll = document.querySelector('.building-3d-layout')?.scrollTop || 0;
     const scrollContainer = document.getElementById('matrix-scroll-container');
     const savedScrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
     const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
@@ -581,7 +582,11 @@ const render = () => {
 
     lucide.createIcons();
     setTimeout(drawTrendChart, 0);
-    setTimeout(() => bindBuilding3DInteractions(state), 0);
+    setTimeout(() => {
+        bindBuilding3DInteractions(state);
+        const layout = document.querySelector('.building-3d-layout');
+        if (layout) layout.scrollTop = saved3DScroll;
+    }, 0);
 
     const newScrollContainer = document.getElementById('matrix-scroll-container');
     if (newScrollContainer) {
@@ -668,6 +673,18 @@ window.app = {
     },
     select3DFloor: (floorId) => {
         state.selected3DFloorId = floorId;
+        state.building3DShowDetails = true;
+        render();
+    },
+    setBuilding3DMetric: (metric) => {
+        if (!['height', 'floorLoad', 'usage', 'area'].includes(metric)) return;
+        state.building3DMetric = metric;
+        render();
+    },
+    setBuilding3DSpacing: (spacing) => {
+        if (!['compact', 'standard', 'wide'].includes(spacing)) return;
+        state.building3DSpacing = spacing;
+        state.isBuilding3DExpanded = true;
         render();
     },
     rotateBuilding3D: (degrees) => {
