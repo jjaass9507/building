@@ -32,6 +32,16 @@ const measurement = (value, unit) => {
 const floorFacts = (floor) => `<span class="building-3d-facts"><span>樓高 <strong>${measurement(floor.height, 'm')}</strong></span><span>荷重 <strong>${measurement(floor.floorLoad, 'kgf/m²')}</strong></span><span class="building-3d-process">製程 <strong>${escapeHtml(floor.usageLabel || '未提供')}</strong></span></span>`;
 
 const isSummaryFloor = (floor) => String(floor || '').trim().toUpperCase() === 'ALL';
+const METRICS = { height: '樓高', floorLoad: '荷重', usage: '製程', area: '面積' };
+const metricValue = (floor, metric, unit) => {
+    if (metric === 'usage') return escapeHtml(floor.usageLabel || '未提供');
+    if (metric === 'area') {
+        if (!(getValue(floor.area) > 0)) return '未提供';
+        const area = formatArea(getValue(floor.area), unit);
+        return `${area.val} ${area.unit}`;
+    }
+    return measurement(floor[metric], metric === 'floorLoad' ? 'kgf/m²' : 'm');
+};
 
 const floorParts = (floor) => [
     { key: 'clean', label: '無塵室', value: getValue(floor.cleanRoomArea), color: COLORS.clean },
@@ -107,15 +117,16 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
     const totalHeight = floors.reduce((sum, item) => sum + Math.max(0, Number(item.height || 0)), 0);
     const selected = floors.find(item => item.id === state.selected3DFloorId) || floors[floors.length - 1] || null;
     const floorIntervals = Math.max(1, floors.length - 1);
+    const metric = Object.prototype.hasOwnProperty.call(METRICS, state.building3DMetric) ? state.building3DMetric : 'height';
     const gap = state.isBuilding3DExpanded
-        ? Math.max(7, Math.min(52, 350 / floorIntervals))
+        ? ({ compact: 90, standard: 130, wide: 175 }[state.building3DSpacing] || 130)
         : Math.max(7, Math.min(30, 250 / floorIntervals));
-    const callouts = [...floors].reverse().map(floor => `
+    const callouts = [...floors].reverse().filter(floor => state.isBuilding3DExpanded || floor.id === selected?.id).map(floor => `
         <button type="button" class="building-3d-callout ${selected?.id === floor.id ? 'is-selected' : ''}"
             data-floor-callout="${escapeHtml(floor.id)}" aria-pressed="${selected?.id === floor.id}"
             onclick="window.app.select3DFloor(decodeURIComponent('${encodeHandlerValue(floor.id)}'))">
-            <span class="building-3d-callout-title">${escapeHtml(floor.floor)}<small>${escapeHtml(floor.status)}</small></span>
-            ${floorFacts(floor)}
+            <span class="building-3d-callout-title">${escapeHtml(floor.floor)}${floor.status === '未成廠' ? '<small>未成廠</small>' : ''}</span>
+            <span class="building-3d-single-value">${metricValue(floor, metric, state.unit)}</span>
         </button>`).join('');
 
     const floorModels = floors.map((floor, index) => {
@@ -133,7 +144,8 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                     <span class="building-3d-top"></span>
                     <span class="building-3d-front"></span>
                     <span class="building-3d-side"></span>
-                    <span class="building-3d-label" data-floor-anchor="${escapeHtml(floor.id)}">${escapeHtml(floor.floor)}</span>
+                    <span class="building-3d-label">${escapeHtml(floor.floor)}</span>
+                    <span style="position:absolute;right:0;top:50%;transform:translateZ(13px)" data-floor-anchor="${escapeHtml(floor.id)}"></span>
                 </button>
             </div>`;
     }).join('');
@@ -180,6 +192,11 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                     </div>
                 </header>
 
+                <div class="building-3d-metric-toolbar">
+                    <span>顯示指標</span>
+                    ${Object.entries(METRICS).map(([key, label]) => `<button type="button" aria-pressed="${key === metric}" class="${key === metric ? 'is-active' : ''}" onclick="window.app.setBuilding3DMetric('${key}')">${label}</button>`).join('')}
+                    <label>樓層間距 <select aria-label="樓層間距" onchange="window.app.setBuilding3DSpacing(this.value)">${Object.entries({compact:'緊湊',standard:'標準',wide:'寬鬆'}).map(([key,label]) => `<option value="${key}" ${(state.building3DSpacing || 'standard') === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+                </div>
                 <div class="building-3d-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_330px] xl:overflow-hidden">
                     <div class="flex min-h-0 flex-col overflow-visible xl:overflow-auto">
                         <div class="grid grid-cols-2 gap-3 border-b border-slate-200 bg-white px-5 py-3 sm:grid-cols-4 dark:border-slate-800 dark:bg-slate-900">
@@ -197,9 +214,9 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
 
                         <div class="building-3d-canvas min-h-[430px] flex-1 overflow-hidden">
                             ${floors.length ? `
-                                <div class="building-3d-scene" data-building-3d-scene>
-                                    <div class="building-3d-axis-label">拖曳空白處旋轉 · 滾輪縮放 · 點選樓層對照資訊</div>
-                                    <div class="building-3d-view-note">${state.isBuilding3DExpanded ? '分層閱讀' : '全棟檢視'}<small>示意間距，非實際樓高比例</small></div>
+                                <div class="building-3d-scene" data-building-3d-scene style="height:${state.isBuilding3DExpanded ? Math.max(520, floors.length * gap + 250) : 520}px">
+                                    <div class="building-3d-axis-label">上下捲動閱讀 · 拖曳空白處旋轉 · Ctrl＋滾輪縮放</div>
+                                    <div class="building-3d-view-note">${state.isBuilding3DExpanded ? '分層閱讀' : '全棟檢視（僅標註選取樓層）'}<small>示意間距，非實際樓高比例</small></div>
                                     <svg class="building-3d-connectors" aria-hidden="true"></svg>
                                     <div class="building-3d-callouts" aria-label="各樓層關鍵資訊">${callouts}</div>
                                     <div class="building-3d-ground"></div>
@@ -215,7 +232,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                             <h3 class="text-sm font-black text-slate-700 dark:text-slate-200">樓層資訊</h3>
                             <span class="text-[11px] font-bold text-slate-400">與模型同步</span>
                         </div>
-                        ${selectedDetail || '<p>尚無樓層資料</p>'}
+                        <details class="building-3d-details" ${state.building3DShowDetails ? 'open' : ''}><summary>展開 ${escapeHtml(selected?.floor || '')} 完整資訊</summary>${selectedDetail || '<p>尚無樓層資料</p>'}</details>
                         <div class="mt-5 border-t border-slate-200 pt-4 dark:border-slate-700">
                             <div class="mb-3 text-xs font-black text-slate-500 dark:text-slate-300">圖面色彩</div>
                             <div class="grid grid-cols-2 gap-2 text-[11px] font-bold text-slate-500 dark:text-slate-400">
@@ -224,7 +241,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                                 <span class="flex items-center gap-2"><i class="h-2.5 w-2.5" style="background:${COLORS.fac}"></i>廠務設施</span>
                                 <span class="flex items-center gap-2"><i class="h-2.5 w-2.5" style="background:${COLORS.pub}"></i>公設／其他</span>
                             </div>
-                            <p class="mt-3 text-[11px] leading-5 text-slate-400">彩色分帶表示選取樓層的分類面積組成，不代表實際平面配置。未成廠以虛線呈現。樓板為相對尺寸示意，不代表建築外型或實際樓高比例。</p>
+                            <p class="mt-3 text-[11px] leading-5 text-slate-400">藍色代表選取樓層，未成廠以虛線呈現。模型厚度、樓板間距與尺寸皆為示意，不代表實際建築外型或樓高比例。</p>
                         </div>
                     </aside>
                 </div>
@@ -247,15 +264,20 @@ export const bindBuilding3DInteractions = (state) => {
     const updateConnectors = () => {
         if (!scene.isConnected) return;
         const bounds = scene.getBoundingClientRect();
-        const railBounds = rail.getBoundingClientRect();
+        let nextTop = 40;
+        let remaining = [...rail.children].reduce((sum, el) => sum + el.offsetHeight + 18, 0);
         connectors.replaceChildren();
         for (const label of rail.querySelectorAll('[data-floor-callout]')) {
-            if (!label.classList.contains('is-selected')) continue;
             const anchor = [...stage.querySelectorAll('[data-floor-anchor]')].find(el => el.dataset.floorAnchor === label.dataset.floorCallout);
             if (!anchor) continue;
-            const a = anchor.getBoundingClientRect(), b = label.getBoundingClientRect();
+            const a = anchor.getBoundingClientRect();
+            const target = a.top + a.height / 2 - bounds.top - label.offsetHeight / 2;
+            const top = Math.max(nextTop, Math.min(target, scene.clientHeight - remaining - 40));
+            remaining -= label.offsetHeight + 18;
+            label.style.top = `${top}px`;
+            nextTop = top + label.offsetHeight + 18;
+            const b = label.getBoundingClientRect();
             const y = b.top + b.height / 2;
-            if (y < railBounds.top || y > railBounds.bottom) continue;
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             const x1 = a.right - bounds.left, y1 = a.top + a.height / 2 - bounds.top;
             const x2 = b.left - bounds.left, y2 = y - bounds.top;
@@ -266,10 +288,10 @@ export const bindBuilding3DInteractions = (state) => {
     };
     rail.addEventListener('scroll', updateConnectors);
     rail.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
-    const selectedLabel = rail.querySelector('.is-selected');
-    if (selectedLabel) rail.scrollTop = Math.max(0, selectedLabel.offsetTop - rail.clientHeight / 2);
     const fitView = () => {
         if (!scene.isConnected) return;
+        const minimumHeight = [...rail.children].reduce((sum, el) => sum + el.offsetHeight + 18, 160);
+        if (scene.clientHeight < minimumHeight) scene.style.height = `${minimumHeight}px`;
         stage.style.setProperty('--building-zoom', '1');
         const faces = [...stage.querySelectorAll('.building-3d-top')].map(el => el.getBoundingClientRect());
         const width = Math.max(...faces.map(b => b.right)) - Math.min(...faces.map(b => b.left));
@@ -327,6 +349,7 @@ export const bindBuilding3DInteractions = (state) => {
     scene.addEventListener('pointercancel', stopDragging);
 
     scene.addEventListener('wheel', event => {
+        if (!event.ctrlKey) return;
         event.preventDefault();
         const direction = event.deltaY > 0 ? -0.06 : 0.06;
         state.building3DZoom = Math.max(0.65, Math.min(1.35, Number(state.building3DZoom ?? 1) + direction));
