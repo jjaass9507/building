@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260907-single-metric';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260907-concept-c';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -28,7 +28,9 @@ const state = {
     building3DRotation: -38,
     building3DTilt: 58,
     building3DZoom: 1,
-    isBuilding3DExpanded: false
+    isBuilding3DExpanded: true,
+    building3DMetric: 'usage',
+    building3DSpacing: 'wide'
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
@@ -663,6 +665,8 @@ window.app = {
         state.building3DTilt = 58;
         state.building3DZoom = 1;
         state.isBuilding3DExpanded = true;
+        state.building3DMetric = 'usage';
+        state.building3DSpacing = 'wide';
         render();
     },
     closeBuilding3D: () => {
@@ -673,7 +677,6 @@ window.app = {
     },
     select3DFloor: (floorId) => {
         state.selected3DFloorId = floorId;
-        state.building3DShowDetails = true;
         render();
     },
     setBuilding3DMetric: (metric) => {
@@ -703,10 +706,6 @@ window.app = {
         state.building3DRotation = view === 'front' ? 0 : -38;
         state.building3DTilt = view === 'front' ? 90 : 58;
         state.building3DZoom = 1;
-        render();
-    },
-    toggleBuilding3DExpanded: () => {
-        state.isBuilding3DExpanded = !state.isBuilding3DExpanded;
         render();
     },
     toggleBuilding: (bldg) => {
