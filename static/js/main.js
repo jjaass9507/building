@@ -1,6 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -20,7 +21,14 @@ const state = {
     isFilterCollapsed: true,
     isCompareTableOpen: false,
     compareMode: 'value',
-    compareExpanded: []
+    compareExpanded: [],
+    isBuilding3DOpen: false,
+    building3DName: null,
+    selected3DFloorId: null,
+    building3DRotation: -38,
+    building3DTilt: 58,
+    building3DZoom: 1,
+    isBuilding3DExpanded: false
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
@@ -568,10 +576,12 @@ const render = () => {
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
         ${renderTrendModal()}
+        ${renderBuilding3DModal(state, appData.meta, appData.processed)}
     `;
 
     lucide.createIcons();
     setTimeout(drawTrendChart, 0);
+    setTimeout(() => bindBuilding3DInteractions(state), 0);
 
     const newScrollContainer = document.getElementById('matrix-scroll-container');
     if (newScrollContainer) {
@@ -637,6 +647,43 @@ window.app = {
         state.selectedBuilding = null;
         render();
     },
+    openBuilding3D: (buildingName) => {
+        const floors = appData.processed
+            .filter(item => item.building === buildingName && String(item.floor || '').trim().toUpperCase() !== 'ALL')
+            .sort((a, b) => a.floorWeight - b.floorWeight);
+        state.isBuilding3DOpen = true;
+        state.building3DName = buildingName;
+        state.selected3DFloorId = floors[floors.length - 1]?.id || null;
+        state.building3DRotation = -38;
+        state.building3DTilt = 58;
+        state.building3DZoom = 1;
+        state.isBuilding3DExpanded = false;
+        render();
+    },
+    closeBuilding3D: () => {
+        state.isBuilding3DOpen = false;
+        state.building3DName = null;
+        state.selected3DFloorId = null;
+        render();
+    },
+    select3DFloor: (floorId) => {
+        state.selected3DFloorId = floorId;
+        render();
+    },
+    rotateBuilding3D: (degrees) => {
+        state.building3DRotation = Number(state.building3DRotation || 0) + Number(degrees || 0);
+        render();
+    },
+    resetBuilding3DView: () => {
+        state.building3DRotation = -38;
+        state.building3DTilt = 58;
+        state.building3DZoom = 1;
+        render();
+    },
+    toggleBuilding3DExpanded: () => {
+        state.isBuilding3DExpanded = !state.isBuilding3DExpanded;
+        render();
+    },
     toggleBuilding: (bldg) => {
         if (bldg === 'ALL') {
             state.filterBuildings = [];
@@ -693,6 +740,12 @@ window.app = {
         }
     }
 };
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && state.isBuilding3DOpen) {
+        window.app.closeBuilding3D();
+    }
+});
 
 const init = async () => {
     try {
