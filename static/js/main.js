@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260907-readable';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -657,7 +657,7 @@ window.app = {
         state.building3DRotation = -38;
         state.building3DTilt = 58;
         state.building3DZoom = 1;
-        state.isBuilding3DExpanded = false;
+        state.isBuilding3DExpanded = true;
         render();
     },
     closeBuilding3D: () => {
@@ -677,6 +677,14 @@ window.app = {
     resetBuilding3DView: () => {
         state.building3DRotation = -38;
         state.building3DTilt = 58;
+        state.building3DZoom = 1;
+        render();
+    },
+    setBuilding3DView: (view) => {
+        if (!['overview', 'exploded', 'front'].includes(view)) return;
+        state.isBuilding3DExpanded = view !== 'overview';
+        state.building3DRotation = view === 'front' ? 0 : -38;
+        state.building3DTilt = view === 'front' ? 90 : 58;
         state.building3DZoom = 1;
         render();
     },
