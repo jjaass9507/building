@@ -189,6 +189,20 @@ Excel 清洗與 JSON 轉換模組，由 `/api/admin/upload-data` 呼叫。
 
 > 此功能是依資料比例產生的資訊示意圖，用於樓層結構與空間配置比較，不代表實際建築外型或 BIM 模型。
 
+### 3D 閱讀介面優化
+
+- 預設分層閱讀，可切換全棟／分層閱讀／正視；模型自動依可用畫面調整比例。
+- 使用低彩度樓板保留全棟脈絡，僅選取樓層顯示分類色帶。
+- 每層資訊卡固定朝向螢幕，列出樓高（m）、荷重（kgf/m²）、製程；無有效數值顯示「未提供」。
+- 僅選取樓層繪製對照線，避免多條連線交錯；右側呈現選取樓層面積與空間組成，移除重複樓層清單。
+- 窄螢幕可橫向捲動模型區保留字級，詳細資訊移至下方；所有改動皆使用原生 CSS／JavaScript，無新套件。
+- 圖中樓板間距、分類色帶位置皆為示意，不用於判斷實際樓高、平面位置或工程尺寸。
+
+呈現方法參考（非引入 SDK）：
+- Autodesk [Explode along levels](https://aps.autodesk.com/blog/explode-along-levels)：按樓層分解。
+- Autodesk [Model Viewing Toolbars](https://help.autodesk.com/cloudhelp/ENU/Collab-Home/files/using-the-viewer/Design_Collab_Viewing_Toolbar.html)：選取、聚焦與 Fit to View。
+- Esri [Apply labels in a scene](https://doc.esri.com/en/arcgis-enterprise-k8s/latest/create/apply-labels-scene.html)：標籤對照線與避免標籤重疊。
+
 ---
 
 ### `permissions.json`
