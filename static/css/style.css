@@ -337,3 +337,50 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
         transition: none;
     }
 }
+
+/* Readable architectural viewer: neutral context, one selection, one leader. */
+.building-3d-dialog { border-radius:6px; }
+.building-3d-dialog > header { gap:16px; }
+.building-3d-dialog > header > div:last-child { flex-wrap:wrap; }
+.building-3d-canvas { background:#f6f8fa; }
+.dark .building-3d-canvas { background:#101a2b; }
+.building-3d-scene { perspective:none; min-height:520px; }
+.building-3d-scene .building-3d-stage { top:50%; left:calc((100% - 284px) / 2); transform:rotateX(var(--building-tilt)) rotateZ(var(--building-angle)) scale(var(--building-zoom)); }
+.building-3d-ground { display:none; }
+.building-3d-view-note { position:absolute; left:20px; top:18px; color:#334155; font-size:13px; font-weight:750; }
+.building-3d-view-note small { display:block; margin-top:4px; font-size:11px; font-weight:400; color:#64748b; }
+.building-3d-callouts { width:260px; right:12px; top:18px; bottom:48px; gap:0; border:1px solid #dbe3ec; background:#fff; scrollbar-gutter:stable; }
+.building-3d-callout { border:0; border-bottom:1px solid #e2e8f0; border-left:3px solid transparent; padding:11px 12px; }
+.building-3d-callout.is-selected { border-left:3px solid #2563eb; }
+.building-3d-callout-title { font-size:15px; }
+.building-3d-facts { grid-template-columns:1fr 1.25fr; gap:5px 8px; font-size:12px; line-height:1.5; }
+.building-3d-facts > span:not(.building-3d-process) strong { display:block; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.building-3d-facts .building-3d-process { grid-column:1 / -1; }
+.building-3d-top { background:#dce5ee; box-shadow:none; border:1px solid #a6b6c8; }
+.building-3d-front { background:#b5c4d4; border-color:#94a6bb; }
+.building-3d-side { background:#99adc2; border-color:#8299b1; }
+.building-3d-floor.is-selected .building-3d-top { background:var(--floor-color); outline:2px solid #2563eb; outline-offset:1px; filter:none; }
+.building-3d-floor.is-selected .building-3d-front { background:#2563eb; }
+.building-3d-label { background:#334155; box-shadow:none; border-radius:2px; }
+.building-3d-floor.is-selected .building-3d-label { background:#1d4ed8; }
+.building-3d-floor.is-planned .building-3d-top { border:2px dashed #8c702a; opacity:.75; }
+.building-3d-detail { padding:0; }
+.building-3d-detail h3 { font-size:20px; overflow-wrap:anywhere; }
+.building-3d-detail-facts { border-top:1px solid #dbe3ec; border-bottom:1px solid #dbe3ec; padding:16px 0; margin:12px 0 20px; }
+.building-3d-detail-area { color:#64748b; font-size:12px; margin-top:12px; }
+.building-3d-detail-area strong { display:block; font-size:22px; color:#334155; margin-top:3px; }
+.building-3d-section-title { margin:0 0 14px; color:#64748b; font-size:12px; font-weight:700; }
+.building-3d-detail > .grid { grid-template-columns:1fr; gap:16px; }
+.dark .building-3d-view-note, .dark .building-3d-detail-area strong { color:#e2e8f0; }
+.dark .building-3d-callouts { border-color:#334155; background:#0f172a; }
+.dark .building-3d-top { background:#63768d; border-color:#8ca0b7; }
+.dark .building-3d-front { background:#465970; }
+.dark .building-3d-side { background:#34465e; }
+.dark .building-3d-floor.is-selected .building-3d-top { background:var(--floor-color); }
+@media (max-width:767px) {
+    .building-3d-scene { min-width:600px; min-height:480px; }
+    .building-3d-canvas { overflow-x:auto; }
+    .building-3d-callouts { width:230px; }
+    .building-3d-scene .building-3d-stage { left:calc((100% - 254px) / 2); }
+    .building-3d-dialog > header { padding:12px; }
+}
