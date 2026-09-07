@@ -14,6 +14,7 @@
 - **廠棟篩選**：支援全部廠棟或單一 / 多廠棟篩選。
 - **深色模式**：支援 light / dark theme，並透過 `localStorage` 記憶使用者偏好。
 - **側邊資訊面板**：點擊樓層或廠棟後，可顯示更詳細的資料摘要。
+- **單棟 3D 示意圖**：由現有樓層資料自動堆疊單棟模型，可旋轉、縮放、展開樓層並點選查看空間組成。
 - **Windows AD 身份辨識**：透過 IIS Windows Integrated Authentication 取得 `REMOTE_USER`。
 - **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`。
 - **Admin 網頁上傳更新資料**：admin 可直接在頁面上傳樓層面積 Excel，系統自動清洗並更新 `data.json`。
@@ -75,6 +76,7 @@ building/
     │   └── style.css
     └── js/
         ├── main.js
+        ├── building-3d.js      # 單棟 3D 樓層模型與互動
         ├── data.js
         ├── utils.js
         └── components.js
@@ -170,6 +172,35 @@ Excel 清洗與 JSON 轉換模組，由 `/api/admin/upload-data` 呼叫。
 ```
 
 若母欄位與子系統加總不一致，系統仍會保留資料，並在上傳結果中回傳 warning。
+
+---
+
+## 單棟 3D 示意圖
+
+每一棟建物標題右側都有 `3D` 按鈕，廠棟概況側邊欄也可開啟 3D 示意圖。模型直接使用 `/api/data` 回傳的既有樓層資料，不需要維護第二份模型資料。
+
+- 樓層順序依樓層名稱解析結果排列，地下樓層會位於模型底部。
+- 樓板尺寸依各樓層的樓地板面積做相對縮放。
+- 以暖白工程圖背景與霧白樓板維持低干擾閱讀；選取樓層使用青綠色，未成廠樓層使用橘色虛線區別。
+- 支援滑鼠拖曳旋轉、`Ctrl`＋滾輪縮放、左右旋轉、重設視角與分層展開。
+- 點選模型樓板或右側樓層導覽，可查看該層面積、製程、樓高與空間組成。
+- `ALL` 是樓層未定的全棟規劃資料，只納入彙整，不會建立虛構樓板。
+
+> 此功能是依資料比例產生的資訊示意圖，用於樓層結構與空間配置比較，不代表實際建築外型或 BIM 模型。
+
+### 3D 閱讀介面優化
+
+- 採用方案 C 的暖白工程圖解風格，搭配霧白樓板、垂直樓層基準線、青綠選取狀態與橘色未成廠標記。
+- 預設使用寬鬆分層閱讀與「製程」指標，可切換全棟／分層閱讀／正視，以及樓高／荷重／製程／面積四種單一指標。
+- 每一樓層旁只顯示目前選取的單一指標，並提供緊湊／標準／寬鬆三種樓層間距；無有效數值顯示「未提供」。
+- 樓層對照線會隨模型與標籤位置更新並避開重疊；右側固定呈現選取樓層的樓高、荷重、製程、面積與空間組成。
+- 窄螢幕可橫向捲動模型區保留字級，詳細資訊移至下方；所有改動皆使用原生 CSS／JavaScript，無新套件。
+- 圖中樓板間距、厚度與尺寸皆為示意，不用於判斷實際樓高、平面位置或工程尺寸。
+
+呈現方法參考（非引入 SDK）：
+- Autodesk [Explode along levels](https://aps.autodesk.com/blog/explode-along-levels)：按樓層分解。
+- Autodesk [Model Viewing Toolbars](https://help.autodesk.com/cloudhelp/ENU/Collab-Home/files/using-the-viewer/Design_Collab_Viewing_Toolbar.html)：選取、聚焦與 Fit to View。
+- Esri [Apply labels in a scene](https://doc.esri.com/en/arcgis-enterprise-k8s/latest/create/apply-labels-scene.html)：標籤對照線與避免標籤重疊。
 
 ---
 

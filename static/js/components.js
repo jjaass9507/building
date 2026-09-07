@@ -8,6 +8,8 @@ const escapeAttr = (value) => String(value ?? '')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 
+const encodeHandlerValue = (value) => encodeURIComponent(String(value ?? '')).replace(/'/g, '%27');
+
 // --- 全域樣式設定 (參數化維護) ---
 const STYLE_CONFIG = {
     // [1] 廠棟排序清單
@@ -410,7 +412,14 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                     return `
                     <div class="flex flex-col">
                         <div onclick="window.app.selectBuilding('${bldg}')" class="flex flex-col justify-between items-center ${HEADER_HEIGHT} text-center border-b-4 border-slate-700 dark:border-blue-600 sticky top-0 z-30 w-[40vw] md:w-72 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800 pt-1 pb-1 shadow-sm">
-                            <div data-building-name="${bldg}" class="flex items-center gap-1.5 text-lg md:text-2xl font-black text-slate-800 dark:text-slate-100">${bldg} <i data-lucide="info" class="w-3.5 h-3.5 text-slate-400"></i></div>
+                            <div class="flex w-full items-center justify-between gap-2 px-2">
+                                <div data-building-name="${bldg}" class="flex min-w-0 items-center gap-1.5 text-lg md:text-2xl font-black text-slate-800 dark:text-slate-100">
+                                    <span class="truncate">${bldg}</span><i data-lucide="info" class="h-3.5 w-3.5 shrink-0 text-slate-400"></i>
+                                </div>
+                                <button type="button" onclick="event.stopPropagation(); window.app.openBuilding3D(decodeURIComponent('${encodeHandlerValue(bldg)}'))" class="inline-flex shrink-0 items-center gap-1 border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700 transition-colors hover:border-blue-400 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:border-blue-600" title="開啟 ${escapeAttr(bldg)} 單棟 3D 示意圖">
+                                    <i data-lucide="box" class="h-3.5 w-3.5"></i><span>3D</span>
+                                </button>
+                            </div>
                             <div class="flex flex-col gap-1 w-full px-2">
                                 <div class="flex justify-between items-center px-2 py-0.5 bg-slate-50 dark:bg-slate-800 rounded border border-slate-100 dark:border-slate-700">
                                     <span class="${HEADER_INFO_LABEL} font-bold text-slate-700 dark:text-slate-400">基地面積</span>
@@ -705,7 +714,10 @@ export const renderPanel = (state, buildingMeta, processedData) => {
                 <div class="p-8 bg-gradient-to-br from-slate-800 to-slate-900 text-white relative overflow-hidden">
                     <div class="flex justify-between items-start mb-6 relative z-10">
                         <div class="flex items-center gap-2 text-xs font-bold bg-white/20 px-3 py-1.5 rounded-full backdrop-blur-sm border border-white/10"><i data-lucide="factory" class="w-3.5 h-3.5"></i> 廠棟概況</div>
-                        <button onclick="window.app.closePanel()" class="p-1.5 hover:bg-white/20 rounded-full transition-colors"><i data-lucide="x" class="w-6 h-6"></i></button>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="window.app.openBuilding3D(decodeURIComponent('${encodeHandlerValue(selectedBuilding)}'))" class="inline-flex items-center gap-1.5 border border-white/30 bg-white/15 px-3 py-1.5 text-xs font-black text-white transition-colors hover:bg-white/25"><i data-lucide="box" class="h-4 w-4"></i>3D 示意圖</button>
+                            <button onclick="window.app.closePanel()" class="p-1.5 hover:bg-white/20 rounded-full transition-colors"><i data-lucide="x" class="w-6 h-6"></i></button>
+                        </div>
                     </div>
                     <h2 class="text-4xl font-extrabold mt-2 tracking-tight relative z-10">${selectedBuilding}</h2>
                 </div>

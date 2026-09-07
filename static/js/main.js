@@ -1,6 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260907-concept-c';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -20,7 +21,16 @@ const state = {
     isFilterCollapsed: true,
     isCompareTableOpen: false,
     compareMode: 'value',
-    compareExpanded: []
+    compareExpanded: [],
+    isBuilding3DOpen: false,
+    building3DName: null,
+    selected3DFloorId: null,
+    building3DRotation: -38,
+    building3DTilt: 58,
+    building3DZoom: 1,
+    isBuilding3DExpanded: true,
+    building3DMetric: 'usage',
+    building3DSpacing: 'wide'
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
@@ -506,6 +516,7 @@ const loadData = async () => {
 };
 
 const render = () => {
+    const saved3DScroll = document.querySelector('.building-3d-layout')?.scrollTop || 0;
     const scrollContainer = document.getElementById('matrix-scroll-container');
     const savedScrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
     const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
@@ -568,10 +579,16 @@ const render = () => {
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
         ${renderTrendModal()}
+        ${renderBuilding3DModal(state, appData.meta, appData.processed)}
     `;
 
     lucide.createIcons();
     setTimeout(drawTrendChart, 0);
+    setTimeout(() => {
+        bindBuilding3DInteractions(state);
+        const layout = document.querySelector('.building-3d-layout');
+        if (layout) layout.scrollTop = saved3DScroll;
+    }, 0);
 
     const newScrollContainer = document.getElementById('matrix-scroll-container');
     if (newScrollContainer) {
@@ -637,6 +654,60 @@ window.app = {
         state.selectedBuilding = null;
         render();
     },
+    openBuilding3D: (buildingName) => {
+        const floors = appData.processed
+            .filter(item => item.building === buildingName && String(item.floor || '').trim().toUpperCase() !== 'ALL')
+            .sort((a, b) => a.floorWeight - b.floorWeight);
+        state.isBuilding3DOpen = true;
+        state.building3DName = buildingName;
+        state.selected3DFloorId = floors[floors.length - 1]?.id || null;
+        state.building3DRotation = -38;
+        state.building3DTilt = 58;
+        state.building3DZoom = 1;
+        state.isBuilding3DExpanded = true;
+        state.building3DMetric = 'usage';
+        state.building3DSpacing = 'wide';
+        render();
+    },
+    closeBuilding3D: () => {
+        state.isBuilding3DOpen = false;
+        state.building3DName = null;
+        state.selected3DFloorId = null;
+        render();
+    },
+    select3DFloor: (floorId) => {
+        state.selected3DFloorId = floorId;
+        render();
+    },
+    setBuilding3DMetric: (metric) => {
+        if (!['height', 'floorLoad', 'usage', 'area'].includes(metric)) return;
+        state.building3DMetric = metric;
+        render();
+    },
+    setBuilding3DSpacing: (spacing) => {
+        if (!['compact', 'standard', 'wide'].includes(spacing)) return;
+        state.building3DSpacing = spacing;
+        state.isBuilding3DExpanded = true;
+        render();
+    },
+    rotateBuilding3D: (degrees) => {
+        state.building3DRotation = Number(state.building3DRotation || 0) + Number(degrees || 0);
+        render();
+    },
+    resetBuilding3DView: () => {
+        state.building3DRotation = -38;
+        state.building3DTilt = 58;
+        state.building3DZoom = 1;
+        render();
+    },
+    setBuilding3DView: (view) => {
+        if (!['overview', 'exploded', 'front'].includes(view)) return;
+        state.isBuilding3DExpanded = view !== 'overview';
+        state.building3DRotation = view === 'front' ? 0 : -38;
+        state.building3DTilt = view === 'front' ? 90 : 58;
+        state.building3DZoom = 1;
+        render();
+    },
     toggleBuilding: (bldg) => {
         if (bldg === 'ALL') {
             state.filterBuildings = [];
@@ -693,6 +764,12 @@ window.app = {
         }
     }
 };
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && state.isBuilding3DOpen) {
+        window.app.closeBuilding3D();
+    }
+});
 
 const init = async () => {
     try {
