@@ -339,7 +339,25 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 }
 
 /* Readable architectural viewer: neutral context, one selection, one leader. */
+.building-3d-metric-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 20px; background:#fff; border-bottom:1px solid #e2e8f0; font-size:13px; color:#64748b; }
+.building-3d-metric-toolbar button, .building-3d-metric-toolbar select { padding:6px 14px; border:1px solid #cbd5e1; border-radius:4px; color:#334155; background:#fff; }
+.building-3d-metric-toolbar button.is-active { background:#1d4ed8; color:#fff; border-color:#1d4ed8; }
+.building-3d-metric-toolbar label { margin-left:auto; }
+.building-3d-single-value { display:block; font-size:20px; color:#334155; font-weight:650; line-height:1.5; overflow-wrap:anywhere; }
+.building-3d-details summary { cursor:pointer; padding:12px 0; font-size:14px; font-weight:700; }
 .building-3d-dialog { border-radius:6px; }
+.building-3d-dialog .building-3d-layout { display:block; overflow:auto; }
+.building-3d-dialog .building-3d-canvas { flex:none; overflow:auto; }
+.building-3d-dialog .building-3d-callouts { top:0; bottom:0; border:0; background:transparent; overflow:visible; pointer-events:none; }
+.building-3d-dialog .building-3d-callout { position:absolute; left:0; width:100%; pointer-events:auto; border:0; background:transparent; padding:8px 12px; }
+.building-3d-dialog .building-3d-callout.is-selected { background:#eaf2ff; border-left:3px solid #2563eb; }
+.building-3d-dialog .building-3d-top { background:#edf1f5; box-shadow:0 12px 20px rgba(42,62,85,.13); border-color:#b7c6d5; }
+.building-3d-dialog .building-3d-floor.is-selected .building-3d-top { background:#d8e9ff; }
+.building-3d-dialog .building-3d-floor.is-selected .building-3d-front { background:#81ace0; }
+.building-3d-dialog .building-3d-layout > aside > div { display:none; }
+.dark .building-3d-metric-toolbar { background:#0f172a; border-color:#334155; }
+.dark .building-3d-single-value { color:#e2e8f0; }
+.dark .building-3d-dialog .building-3d-callout.is-selected { background:#172554; }
 .building-3d-dialog > header { gap:16px; }
 .building-3d-dialog > header > div:last-child { flex-wrap:wrap; }
 .building-3d-canvas { background:#f6f8fa; }
