@@ -117,12 +117,12 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
     const totalHeight = floors.reduce((sum, item) => sum + Math.max(0, Number(item.height || 0)), 0);
     const selected = floors.find(item => item.id === state.selected3DFloorId) || floors[floors.length - 1] || null;
     const floorIntervals = Math.max(1, floors.length - 1);
-    const metric = Object.prototype.hasOwnProperty.call(METRICS, state.building3DMetric) ? state.building3DMetric : 'height';
+    const metric = Object.prototype.hasOwnProperty.call(METRICS, state.building3DMetric) ? state.building3DMetric : 'usage';
     const gap = state.isBuilding3DExpanded
         ? ({ compact: 90, standard: 130, wide: 175 }[state.building3DSpacing] || 130)
         : Math.max(7, Math.min(30, 250 / floorIntervals));
     const callouts = [...floors].reverse().filter(floor => state.isBuilding3DExpanded || floor.id === selected?.id).map(floor => `
-        <button type="button" class="building-3d-callout ${selected?.id === floor.id ? 'is-selected' : ''}"
+        <button type="button" class="building-3d-callout ${selected?.id === floor.id ? 'is-selected' : ''} ${floor.status === '未成廠' ? 'is-planned' : ''}"
             data-floor-callout="${escapeHtml(floor.id)}" aria-pressed="${selected?.id === floor.id}"
             onclick="window.app.select3DFloor(decodeURIComponent('${encodeHandlerValue(floor.id)}'))">
             <span class="building-3d-callout-title">${escapeHtml(floor.floor)}${floor.status === '未成廠' ? '<small>未成廠</small>' : ''}</span>
@@ -154,7 +154,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
         <section class="building-3d-detail">
             <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <div class="text-xs font-bold text-blue-600 dark:text-blue-400">目前選取樓層</div>
+                    <div class="building-3d-detail-kicker">目前選取樓層</div>
                     <h3 class="mt-1 text-xl font-black text-slate-900 dark:text-white">${escapeHtml(selected.floor)} · ${escapeHtml(selected.usageLabel || '非製程')}</h3>
                 </div>
                 <div class="flex gap-2">
@@ -176,7 +176,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                     <div class="flex items-center gap-3">
                         <span class="inline-flex h-10 w-10 items-center justify-center bg-slate-800 text-white dark:bg-blue-600"><i data-lucide="box" class="h-5 w-5"></i></span>
                         <div>
-                            <div class="text-[11px] font-black uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">Single Building View</div>
+                            <div class="building-3d-eyebrow">Architectural Floor View</div>
                             <h2 id="building-3d-title" class="text-xl font-black text-slate-900 dark:text-white">${escapeHtml(buildingName)} 單棟 3D 示意圖</h2>
                         </div>
                     </div>
@@ -187,7 +187,6 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                         <button type="button" onclick="window.app.rotateBuilding3D(-15)" class="building-3d-tool" title="向左旋轉"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>
                         <button type="button" onclick="window.app.resetBuilding3DView()" class="building-3d-tool gap-1 px-3 text-xs font-bold" title="重設視角"><i data-lucide="scan" class="h-4 w-4"></i><span class="hidden sm:inline">重設</span></button>
                         <button type="button" onclick="window.app.rotateBuilding3D(15)" class="building-3d-tool" title="向右旋轉"><i data-lucide="rotate-cw" class="h-4 w-4"></i></button>
-                        <button type="button" onclick="window.app.toggleBuilding3DExpanded()" class="building-3d-tool gap-1 px-3 text-xs font-bold ${state.isBuilding3DExpanded ? 'is-active' : ''}" title="切換樓層間距"><i data-lucide="unfold-vertical" class="h-4 w-4"></i><span class="hidden sm:inline">分層</span></button>
                         <button type="button" onclick="window.app.closeBuilding3D()" class="building-3d-tool ml-1" title="關閉"><i data-lucide="x" class="h-5 w-5"></i></button>
                     </div>
                 </header>
@@ -195,7 +194,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                 <div class="building-3d-metric-toolbar">
                     <span>顯示指標</span>
                     ${Object.entries(METRICS).map(([key, label]) => `<button type="button" aria-pressed="${key === metric}" class="${key === metric ? 'is-active' : ''}" onclick="window.app.setBuilding3DMetric('${key}')">${label}</button>`).join('')}
-                    <label>樓層間距 <select aria-label="樓層間距" onchange="window.app.setBuilding3DSpacing(this.value)">${Object.entries({compact:'緊湊',standard:'標準',wide:'寬鬆'}).map(([key,label]) => `<option value="${key}" ${(state.building3DSpacing || 'standard') === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+                    <div class="building-3d-spacing" role="group" aria-label="樓層間距"><span>樓層間距</span>${Object.entries({compact:'緊湊',standard:'標準',wide:'寬鬆'}).map(([key,label]) => `<button type="button" aria-pressed="${(state.building3DSpacing || 'wide') === key}" class="${(state.building3DSpacing || 'wide') === key ? 'is-active' : ''}" onclick="window.app.setBuilding3DSpacing('${key}')">${label}</button>`).join('')}</div>
                 </div>
                 <div class="building-3d-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_330px] xl:overflow-hidden">
                     <div class="flex min-h-0 flex-col overflow-visible xl:overflow-auto">
@@ -232,17 +231,8 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                             <h3 class="text-sm font-black text-slate-700 dark:text-slate-200">樓層資訊</h3>
                             <span class="text-[11px] font-bold text-slate-400">與模型同步</span>
                         </div>
-                        <details class="building-3d-details" ${state.building3DShowDetails ? 'open' : ''}><summary>展開 ${escapeHtml(selected?.floor || '')} 完整資訊</summary>${selectedDetail || '<p>尚無樓層資料</p>'}</details>
-                        <div class="mt-5 border-t border-slate-200 pt-4 dark:border-slate-700">
-                            <div class="mb-3 text-xs font-black text-slate-500 dark:text-slate-300">圖面色彩</div>
-                            <div class="grid grid-cols-2 gap-2 text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                                <span class="flex items-center gap-2"><i class="h-2.5 w-2.5" style="background:${COLORS.clean}"></i>無塵室</span>
-                                <span class="flex items-center gap-2"><i class="h-2.5 w-2.5" style="background:${COLORS.prod}"></i>生產週邊</span>
-                                <span class="flex items-center gap-2"><i class="h-2.5 w-2.5" style="background:${COLORS.fac}"></i>廠務設施</span>
-                                <span class="flex items-center gap-2"><i class="h-2.5 w-2.5" style="background:${COLORS.pub}"></i>公設／其他</span>
-                            </div>
-                            <p class="mt-3 text-[11px] leading-5 text-slate-400">藍色代表選取樓層，未成廠以虛線呈現。模型厚度、樓板間距與尺寸皆為示意，不代表實際建築外型或樓高比例。</p>
-                        </div>
+                        ${selectedDetail || '<p>尚無樓層資料</p>'}
+                        <p class="building-3d-disclaimer">青綠色代表選取樓層，橘色圓點代表未成廠。模型厚度、間距與尺寸皆為資訊示意，不代表實際建築外型或樓高比例。</p>
                     </aside>
                 </div>
             </section>
