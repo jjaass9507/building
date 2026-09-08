@@ -1,12 +1,5 @@
 import { formatArea } from './utils.js';
 
-const COLORS = {
-    clean: '#0ea5e9',
-    prod: '#10b981',
-    fac: '#f59e0b',
-    pub: '#94a3b8'
-};
-
 const getValue = (value) => {
     if (value && typeof value === 'object') {
         return Number(value.value ?? value.val ?? 0) || 0;
@@ -43,28 +36,6 @@ const metricValue = (floor, metric, unit) => {
     return measurement(floor[metric], metric === 'floorLoad' ? 'kgf/m²' : 'm');
 };
 
-const floorParts = (floor) => [
-    { key: 'clean', label: '無塵室', value: getValue(floor.cleanRoomArea), color: COLORS.clean },
-    { key: 'prod', label: '生產週邊', value: getValue(floor.prodArea), color: COLORS.prod },
-    { key: 'fac', label: '廠務設施', value: getValue(floor.facArea), color: COLORS.fac },
-    { key: 'pub', label: '公設／其他', value: getValue(floor.pubArea), color: COLORS.pub }
-];
-
-const buildFloorGradient = (floor) => {
-    const parts = floorParts(floor).filter(item => item.value > 0);
-    const total = parts.reduce((sum, item) => sum + item.value, 0);
-    if (total <= 0) return 'linear-gradient(135deg, #cbd5e1, #94a3b8)';
-
-    let cursor = 0;
-    const stops = [];
-    parts.forEach((item, index) => {
-        const start = cursor;
-        cursor = index === parts.length - 1 ? 100 : cursor + (item.value / total) * 100;
-        stops.push(`${item.color} ${start.toFixed(2)}%`, `${item.color} ${cursor.toFixed(2)}%`);
-    });
-    return `linear-gradient(90deg, ${stops.join(', ')})`;
-};
-
 const renderMetric = (label, value, unit, colorClass = 'text-slate-800 dark:text-white') => {
     const formatted = formatArea(value, unit);
     return `
@@ -72,26 +43,6 @@ const renderMetric = (label, value, unit, colorClass = 'text-slate-800 dark:text
             <div class="text-[11px] font-bold text-slate-400">${label}</div>
             <div class="mt-0.5 font-mono text-lg font-black ${colorClass}">${formatted.val}<span class="ml-1 text-[11px] text-slate-400">${formatted.unit}</span></div>
         </div>`;
-};
-
-const renderFloorComposition = (floor, unit) => {
-    const area = getValue(floor.area);
-    return floorParts(floor).map(item => {
-        const pct = area > 0 ? Math.min(100, (item.value / area) * 100) : 0;
-        const formatted = formatArea(item.value, unit);
-        return `
-            <div>
-                <div class="mb-1 flex items-center justify-between gap-3 text-xs">
-                    <span class="flex items-center gap-2 font-bold text-slate-600 dark:text-slate-300">
-                        <span class="h-2.5 w-2.5" style="background:${item.color}"></span>${item.label}
-                    </span>
-                    <span class="font-mono font-bold text-slate-700 dark:text-slate-200">${formatted.val} ${formatted.unit}</span>
-                </div>
-                <div class="h-1.5 overflow-hidden bg-slate-100 dark:bg-slate-700">
-                    <div class="h-full" style="width:${pct.toFixed(2)}%;background:${item.color}"></div>
-                </div>
-            </div>`;
-    }).join('');
 };
 
 const renderEmptyBuilding = (buildingName, unknownSummary) => `
@@ -116,11 +67,9 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
     const totalArea = floors.reduce((sum, item) => sum + getValue(item.area), 0);
     const totalHeight = floors.reduce((sum, item) => sum + Math.max(0, Number(item.height || 0)), 0);
     const selected = floors.find(item => item.id === state.selected3DFloorId) || floors[floors.length - 1] || null;
-    const floorIntervals = Math.max(1, floors.length - 1);
+    const floorIntervals = Math.max(0, floors.length - 1);
     const metric = Object.prototype.hasOwnProperty.call(METRICS, state.building3DMetric) ? state.building3DMetric : 'usage';
-    const gap = state.isBuilding3DExpanded
-        ? ({ compact: 72, standard: 96, wide: 124 }[state.building3DSpacing] || 96)
-        : 32;
+    const gap = 32;
     const volumeHeight = 30;
     const coreSpan = floorIntervals * gap + volumeHeight + 18;
     const coreBottom = -(floors.length - 1) * gap / 2 - 9;
@@ -142,7 +91,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
         const encodedFloorId = encodeHandlerValue(floor.id);
 
         return `
-            <div class="building-3d-floor ${selectedClass} ${plannedClass}" style="--floor-width:${width}px;--floor-depth:${depth}px;--floor-level:${level}px;--floor-color:${buildFloorGradient(floor)};--floor-order:${index}">
+            <div class="building-3d-floor ${selectedClass} ${plannedClass}" style="--floor-width:${width}px;--floor-depth:${depth}px;--floor-level:${level}px;--floor-order:${index}">
                 <button type="button" class="building-3d-volume" onclick="window.app.select3DFloor(decodeURIComponent('${encodedFloorId}'))" aria-label="查看 ${escapeHtml(floor.floor)} 樓層資訊">
                     <span class="building-3d-top"><span class="building-3d-roof-line"></span></span>
                     <span class="building-3d-front"><span class="building-3d-window-band"></span></span>
@@ -154,23 +103,19 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
             </div>`;
     }).join('');
 
+    const selectedArea = selected ? formatArea(getValue(selected.area), state.unit) : null;
     const selectedDetail = selected ? `
-        <section class="building-3d-detail">
-            <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <section class="building-3d-detail building-3d-overlay-detail">
+            <div class="building-3d-detail-heading">
                 <div>
-                    <div class="building-3d-detail-kicker">目前選取樓層</div>
-                    <h3 class="mt-1 text-xl font-black text-slate-900 dark:text-white">${escapeHtml(selected.floor)} · ${escapeHtml(selected.usageLabel || '非製程')}</h3>
+                    <div class="building-3d-detail-kicker">選取樓層</div>
+                    <h3>${escapeHtml(selected.floor)} · ${escapeHtml(selected.usageLabel || '非製程')}</h3>
                 </div>
-                <div class="flex gap-2">
-                    <span class="border px-2 py-1 text-xs font-bold ${selected.status === '未成廠' ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'}">${escapeHtml(selected.status)}</span>
-                    <span class="border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-bold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">樓高 ${Number(selected.height || 0) > 0 ? `${escapeHtml(selected.height)} m` : '-'}</span>
-                </div>
+                <span class="building-3d-status ${selected.status === '未成廠' ? 'is-planned' : ''}">${escapeHtml(selected.status || '未提供')}</span>
             </div>
             <div class="building-3d-detail-facts">${floorFacts(selected)}
-                <div class="building-3d-detail-area">樓地板面積 <strong>${formatArea(getValue(selected.area), state.unit).val} ${formatArea(getValue(selected.area), state.unit).unit}</strong></div>
+                <div class="building-3d-detail-area">樓地板面積 <strong>${selectedArea.val} ${selectedArea.unit}</strong></div>
             </div>
-            <h4 class="building-3d-section-title">空間組成</h4>
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">${renderFloorComposition(selected, state.unit)}</div>
         </section>` : '';
 
     return `
@@ -185,9 +130,8 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button type="button" onclick="window.app.setBuilding3DView('overview')" class="building-3d-tool px-3 text-xs font-bold">全棟</button>
-                        <button type="button" onclick="window.app.setBuilding3DView('exploded')" class="building-3d-tool px-3 text-xs font-bold ${state.isBuilding3DExpanded ? 'is-active' : ''}">分層閱讀</button>
-                        <button type="button" onclick="window.app.setBuilding3DView('front')" class="building-3d-tool px-3 text-xs font-bold">正視</button>
+                        <button type="button" onclick="window.app.setBuilding3DView('overview')" class="building-3d-tool px-3 text-xs font-bold ${state.building3DView !== 'front' ? 'is-active' : ''}">立體</button>
+                        <button type="button" onclick="window.app.setBuilding3DView('front')" class="building-3d-tool px-3 text-xs font-bold ${state.building3DView === 'front' ? 'is-active' : ''}">正視</button>
                         <button type="button" onclick="window.app.rotateBuilding3D(-15)" class="building-3d-tool" title="向左旋轉"><i data-lucide="rotate-ccw" class="h-4 w-4"></i></button>
                         <button type="button" onclick="window.app.resetBuilding3DView()" class="building-3d-tool gap-1 px-3 text-xs font-bold" title="重設視角"><i data-lucide="scan" class="h-4 w-4"></i><span class="hidden sm:inline">重設</span></button>
                         <button type="button" onclick="window.app.rotateBuilding3D(15)" class="building-3d-tool" title="向右旋轉"><i data-lucide="rotate-cw" class="h-4 w-4"></i></button>
@@ -198,9 +142,8 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                 <div class="building-3d-metric-toolbar">
                     <span>顯示指標</span>
                     ${Object.entries(METRICS).map(([key, label]) => `<button type="button" aria-pressed="${key === metric}" class="${key === metric ? 'is-active' : ''}" onclick="window.app.setBuilding3DMetric('${key}')">${label}</button>`).join('')}
-                    <div class="building-3d-spacing" role="group" aria-label="樓層間距"><span>樓層間距</span>${Object.entries({compact:'緊湊',standard:'標準',wide:'寬鬆'}).map(([key,label]) => `<button type="button" aria-pressed="${(state.building3DSpacing || 'wide') === key}" class="${(state.building3DSpacing || 'wide') === key ? 'is-active' : ''}" onclick="window.app.setBuilding3DSpacing('${key}')">${label}</button>`).join('')}</div>
                 </div>
-                <div class="building-3d-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_330px] xl:overflow-hidden">
+                <div class="building-3d-layout min-h-0 flex-1 overflow-hidden">
                     <div class="flex min-h-0 flex-col overflow-visible xl:overflow-auto">
                         <div class="grid grid-cols-2 gap-3 border-b border-slate-200 bg-white px-5 py-3 sm:grid-cols-4 dark:border-slate-800 dark:bg-slate-900">
                             <div class="border-l-2 border-slate-200 pl-3 dark:border-slate-700">
@@ -219,7 +162,8 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                             ${floors.length ? `
                                 <div class="building-3d-scene" data-building-3d-scene style="--floor-count:${floors.length}">
                                     <div class="building-3d-axis-label">拖曳旋轉 · Ctrl＋滾輪縮放 · 全樓層自動適應畫面</div>
-                                    <div class="building-3d-view-note">${state.isBuilding3DExpanded ? '分層閱讀' : '完整量體'}<small>實心沙盤示意，間距非實際樓高比例</small></div>
+                                    <div class="building-3d-view-note">完整建築量體<small>點選樓層或標籤查看資料</small></div>
+                                    ${selectedDetail}
                                     <svg class="building-3d-connectors" aria-hidden="true"></svg>
                                     <div class="building-3d-callouts" aria-label="各樓層關鍵資訊">${callouts}</div>
                                     <div class="building-3d-ground"></div>
@@ -237,14 +181,6 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                         </div>
                     </div>
 
-                    <aside class="min-h-0 overflow-visible border-t border-slate-200 bg-slate-100/80 p-4 xl:overflow-y-auto xl:border-l xl:border-t-0 dark:border-slate-800 dark:bg-slate-900/60">
-                        <div class="mb-3 flex items-center justify-between">
-                            <h3 class="text-sm font-black text-slate-700 dark:text-slate-200">樓層資訊</h3>
-                            <span class="text-[11px] font-bold text-slate-400">與模型同步</span>
-                        </div>
-                        ${selectedDetail || '<p>尚無樓層資料</p>'}
-                        <p class="building-3d-disclaimer">青綠色代表選取樓層，橘色圓點代表未成廠。模型厚度、間距與尺寸皆為資訊示意，不代表實際建築外型或樓高比例。</p>
-                    </aside>
                 </div>
             </section>
         </div>`;
@@ -277,7 +213,10 @@ export const bindBuilding3DInteractions = (state) => {
             const anchor = [...stage.querySelectorAll('[data-floor-anchor]')].find(el => el.dataset.floorAnchor === label.dataset.floorCallout);
             if (!anchor) return;
             const a = anchor.getBoundingClientRect();
-            const top = topPadding + index * slot;
+            const laneTop = topPadding + index * slot;
+            const labelHeight = Math.min(slot, label.offsetHeight || slot);
+            const targetTop = a.top + a.height / 2 - bounds.top - labelHeight / 2;
+            const top = Math.max(laneTop, Math.min(targetTop, laneTop + Math.max(0, slot - labelHeight)));
             label.style.top = `${top}px`;
             const b = label.getBoundingClientRect();
             const y = b.top + b.height / 2;
@@ -323,7 +262,7 @@ export const bindBuilding3DInteractions = (state) => {
     };
 
     scene.addEventListener('pointerdown', event => {
-        if (event.button !== 0 || event.target.closest('button, .building-3d-callouts')) return;
+        if (event.button !== 0 || event.target.closest('button, .building-3d-callouts, .building-3d-overlay-detail')) return;
         dragging = true;
         startX = event.clientX;
         startY = event.clientY;
@@ -335,6 +274,7 @@ export const bindBuilding3DInteractions = (state) => {
 
     scene.addEventListener('pointermove', event => {
         if (!dragging) return;
+        state.building3DView = 'overview';
         state.building3DRotation = startAngle + (event.clientX - startX) * 0.35;
         state.building3DTilt = Math.max(35, Math.min(75, startTilt - (event.clientY - startY) * 0.22));
         applyView();
