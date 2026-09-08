@@ -59,5 +59,7 @@ test('all floors remain in one continuous 3D building', () => {
     assert.equal((html.match(/class="building-3d-core"/g) || []).length, 1);
     assert.equal((html.match(/class="building-3d-podium"/g) || []).length, 1);
     assert.equal((html.match(/class="building-3d-floor /g) || []).length, 24);
-    assert.equal((html.match(/data-floor-tag=/g) || []).length, 24);
+    assert.equal((html.match(/data-floor-face=/g) || []).length, 24);
+    assert.equal((html.match(/class="building-3d-face-info"/g) || []).length, 24);
+    assert.ok(!html.includes('building-3d-floor-tags')); 
 });

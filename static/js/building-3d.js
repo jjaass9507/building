@@ -73,15 +73,6 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
     const volumeHeight = 30;
     const coreSpan = floorIntervals * gap + volumeHeight + 18;
     const coreBottom = -(floors.length - 1) * gap / 2 - 9;
-    const floorTags = floors.map(floor => `
-        <button type="button" class="building-3d-floor-tag ${selected?.id === floor.id ? 'is-selected' : ''} ${floor.status === '未成廠' ? 'is-planned' : ''}"
-            data-floor-tag="${escapeHtml(floor.id)}" aria-pressed="${selected?.id === floor.id}"
-            onclick="window.app.select3DFloor(decodeURIComponent('${encodeHandlerValue(floor.id)}'))">
-            <span class="building-3d-floor-tag-name">${escapeHtml(floor.floor)}</span>
-            <span class="building-3d-floor-tag-value">${metricValue(floor, metric, state.unit)}</span>
-            ${floor.status === '未成廠' ? '<span class="building-3d-floor-tag-status">未成廠</span>' : ''}
-        </button>`).join('');
-
     const floorModels = floors.map((floor, index) => {
         const areaRatio = Math.sqrt(Math.max(0, getValue(floor.area)) / maxArea);
         const width = Math.round(230 + 150 * areaRatio);
@@ -95,10 +86,15 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
             <div class="building-3d-floor ${selectedClass} ${plannedClass}" style="--floor-width:${width}px;--floor-depth:${depth}px;--floor-level:${level}px;--floor-order:${index}">
                 <button type="button" class="building-3d-volume" onclick="window.app.select3DFloor(decodeURIComponent('${encodedFloorId}'))" aria-label="查看 ${escapeHtml(floor.floor)} 樓層資訊">
                     <span class="building-3d-top"><span class="building-3d-roof-line"></span></span>
-                    <span class="building-3d-front"><span class="building-3d-window-band"></span></span>
+                    <span class="building-3d-front" data-floor-face="${escapeHtml(floor.id)}">
+                        <span class="building-3d-window-band"></span>
+                        <span class="building-3d-face-info">
+                            <strong>${escapeHtml(floor.floor)}</strong>
+                            <span>${metricValue(floor, metric, state.unit)}</span>
+                        </span>
+                    </span>
                     <span class="building-3d-side"><span class="building-3d-window-band"></span></span>
                     <span class="building-3d-corner"></span>
-                    <span class="building-3d-anchor" data-floor-anchor="${escapeHtml(floor.id)}"></span>
                 </button>
             </div>`;
     }).join('');
@@ -164,7 +160,6 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                                     <div class="building-3d-axis-label">拖曳旋轉 · Ctrl＋滾輪縮放 · 全樓層自動適應畫面</div>
                                     <div class="building-3d-view-note">完整建築量體<small>點選樓層或標籤查看資料</small></div>
                                     ${selectedDetail}
-                                    <div class="building-3d-floor-tags" aria-label="貼附於模型的樓層指標">${floorTags}</div>
                                     <div class="building-3d-ground"></div>
                                     <div class="building-3d-stage" data-building-3d-stage style="--building-angle:${Number(state.building3DRotation ?? -38)}deg;--building-tilt:${Number(state.building3DTilt ?? 58)}deg;--building-zoom:${Number(state.building3DZoom ?? 1)}">
                                         <div class="building-3d-core" style="--core-span:${coreSpan}px;--core-bottom:${coreBottom}px" aria-hidden="true">
@@ -195,36 +190,21 @@ export const bindBuilding3DInteractions = (state) => {
     if (!scene || !stage || scene.dataset.bound === 'true') return;
     scene.dataset.bound = 'true';
 
-    const tagsLayer = scene.querySelector('.building-3d-floor-tags');
-    const tags = [...tagsLayer.querySelectorAll('[data-floor-tag]')];
-    const anchors = [...stage.querySelectorAll('[data-floor-anchor]')];
-    const updateFloorTags = () => {
+    const updateSelectedDetail = () => {
         if (!scene.isConnected) return;
-        const bounds = scene.getBoundingClientRect();
-        tags.forEach(tag => {
-            const anchor = anchors.find(el => el.dataset.floorAnchor === tag.dataset.floorTag);
-            if (!anchor) return;
-            const point = anchor.getBoundingClientRect();
-            const tagWidth = tag.offsetWidth;
-            const tagHeight = tag.offsetHeight;
-            const x = point.left + point.width / 2 - bounds.left;
-            const y = point.top + point.height / 2 - bounds.top;
-            const left = Math.max(8, Math.min(scene.clientWidth - tagWidth - 8, x - tagWidth / 2));
-            const top = Math.max(8, Math.min(scene.clientHeight - tagHeight - 8, y - tagHeight / 2));
-            tag.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-        });
         const detail = scene.querySelector('.building-3d-overlay-detail');
-        const selectedTag = tags.find(tag => tag.classList.contains('is-selected'));
-        if (detail && selectedTag) {
-            const tagBounds = selectedTag.getBoundingClientRect();
-            const detailWidth = detail.offsetWidth;
-            const detailHeight = detail.offsetHeight;
-            const preferredLeft = tagBounds.right - bounds.left + 14;
-            const alternateLeft = tagBounds.left - bounds.left - detailWidth - 14;
-            const left = preferredLeft + detailWidth < scene.clientWidth - 8 ? preferredLeft : Math.max(8, alternateLeft);
-            const top = Math.max(8, Math.min(scene.clientHeight - detailHeight - 8, tagBounds.top - bounds.top - detailHeight / 2 + tagBounds.height / 2));
-            detail.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-        }
+        const selectedFace = stage.querySelector('.building-3d-floor.is-selected .building-3d-front');
+        if (!detail || !selectedFace) return;
+        const bounds = scene.getBoundingClientRect();
+        const faceBounds = selectedFace.getBoundingClientRect();
+        const detailWidth = detail.offsetWidth;
+        const detailHeight = detail.offsetHeight;
+        const preferredLeft = faceBounds.right - bounds.left + 18;
+        const alternateLeft = faceBounds.left - bounds.left - detailWidth - 18;
+        const left = preferredLeft + detailWidth < scene.clientWidth - 8 ? preferredLeft : Math.max(8, alternateLeft);
+        const faceCenterY = faceBounds.top + faceBounds.height / 2 - bounds.top;
+        const top = Math.max(8, Math.min(scene.clientHeight - detailHeight - 8, faceCenterY - detailHeight / 2));
+        detail.style.transform = `translate3d(${left}px, ${top}px, 0)`;
     };
     const fitView = () => {
         if (!scene.isConnected) return;
@@ -253,7 +233,7 @@ export const bindBuilding3DInteractions = (state) => {
             const shiftY = sceneBounds.top + scene.clientHeight / 2 - (top + bottom) / 2;
             stage.style.left = `${scene.clientWidth / 2 + shiftX}px`;
             stage.style.top = `${scene.clientHeight * .52 + shiftY}px`;
-            requestAnimationFrame(updateFloorTags);
+            requestAnimationFrame(updateSelectedDetail);
         });
     };
     requestAnimationFrame(fitView);
@@ -277,7 +257,7 @@ export const bindBuilding3DInteractions = (state) => {
     };
 
     scene.addEventListener('pointerdown', event => {
-        if (event.button !== 0 || event.target.closest('button, .building-3d-floor-tags, .building-3d-overlay-detail')) return;
+        if (event.button !== 0 || event.target.closest('button, .building-3d-overlay-detail')) return;
         dragging = true;
         startX = event.clientX;
         startY = event.clientY;
