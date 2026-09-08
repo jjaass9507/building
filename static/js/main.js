@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260908-solid-mass';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260908-overlay-labels';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -28,9 +28,8 @@ const state = {
     building3DRotation: -38,
     building3DTilt: 58,
     building3DZoom: 1,
-    isBuilding3DExpanded: true,
-    building3DMetric: 'usage',
-    building3DSpacing: 'wide'
+    building3DView: 'overview',
+    building3DMetric: 'usage'
 };
 
 const HIDDEN_MATRIX_FLOORS = new Set(['ALL']);
@@ -664,9 +663,8 @@ window.app = {
         state.building3DRotation = -38;
         state.building3DTilt = 58;
         state.building3DZoom = 1;
-        state.isBuilding3DExpanded = true;
+        state.building3DView = 'overview';
         state.building3DMetric = 'usage';
-        state.building3DSpacing = 'wide';
         render();
     },
     closeBuilding3D: () => {
@@ -684,25 +682,21 @@ window.app = {
         state.building3DMetric = metric;
         render();
     },
-    setBuilding3DSpacing: (spacing) => {
-        if (!['compact', 'standard', 'wide'].includes(spacing)) return;
-        state.building3DSpacing = spacing;
-        state.isBuilding3DExpanded = true;
-        render();
-    },
     rotateBuilding3D: (degrees) => {
+        state.building3DView = 'overview';
         state.building3DRotation = Number(state.building3DRotation || 0) + Number(degrees || 0);
         render();
     },
     resetBuilding3DView: () => {
+        state.building3DView = 'overview';
         state.building3DRotation = -38;
         state.building3DTilt = 58;
         state.building3DZoom = 1;
         render();
     },
     setBuilding3DView: (view) => {
-        if (!['overview', 'exploded', 'front'].includes(view)) return;
-        state.isBuilding3DExpanded = view !== 'overview';
+        if (!['overview', 'front'].includes(view)) return;
+        state.building3DView = view;
         state.building3DRotation = view === 'front' ? 0 : -38;
         state.building3DTilt = view === 'front' ? 90 : 58;
         state.building3DZoom = 1;
