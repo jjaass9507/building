@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260908-svg-facade';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260908-real-3d-labels';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -25,6 +25,9 @@ const state = {
     isBuilding3DOpen: false,
     building3DName: null,
     selected3DFloorId: null,
+    building3DRotation: -38,
+    building3DTilt: 58,
+    building3DZoom: 1,
     building3DView: 'overview',
     building3DMetric: 'usage'
 };
@@ -512,7 +515,7 @@ const loadData = async () => {
 };
 
 const render = () => {
-    const saved3DScroll = document.querySelector('.building-3d-scene')?.scrollTop || 0;
+    const saved3DScroll = document.querySelector('.building-3d-layout')?.scrollTop || 0;
     const scrollContainer = document.getElementById('matrix-scroll-container');
     const savedScrollLeft = scrollContainer ? scrollContainer.scrollLeft : 0;
     const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
@@ -582,7 +585,7 @@ const render = () => {
     setTimeout(drawTrendChart, 0);
     setTimeout(() => {
         bindBuilding3DInteractions(state);
-        const layout = document.querySelector('.building-3d-scene');
+        const layout = document.querySelector('.building-3d-layout');
         if (layout) layout.scrollTop = saved3DScroll;
     }, 0);
 
@@ -656,7 +659,10 @@ window.app = {
             .sort((a, b) => a.floorWeight - b.floorWeight);
         state.isBuilding3DOpen = true;
         state.building3DName = buildingName;
-        state.selected3DFloorId = floors[floors.length - 1]?.id || null;
+        state.selected3DFloorId = null;
+        state.building3DRotation = -38;
+        state.building3DTilt = 58;
+        state.building3DZoom = 1;
         state.building3DView = 'overview';
         state.building3DMetric = 'usage';
         render();
@@ -676,9 +682,24 @@ window.app = {
         state.building3DMetric = metric;
         render();
     },
+    rotateBuilding3D: (degrees) => {
+        state.building3DView = 'overview';
+        state.building3DRotation = Number(state.building3DRotation || 0) + Number(degrees || 0);
+        render();
+    },
+    resetBuilding3DView: () => {
+        state.building3DView = 'overview';
+        state.building3DRotation = -38;
+        state.building3DTilt = 58;
+        state.building3DZoom = 1;
+        render();
+    },
     setBuilding3DView: (view) => {
         if (!['overview', 'front'].includes(view)) return;
         state.building3DView = view;
+        state.building3DRotation = view === 'front' ? 0 : -38;
+        state.building3DTilt = view === 'front' ? 90 : 58;
+        state.building3DZoom = 1;
         render();
     },
     toggleBuilding: (bldg) => {
