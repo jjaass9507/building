@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260908-overlay-labels';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260908-face-aligned';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -659,7 +659,7 @@ window.app = {
             .sort((a, b) => a.floorWeight - b.floorWeight);
         state.isBuilding3DOpen = true;
         state.building3DName = buildingName;
-        state.selected3DFloorId = floors[floors.length - 1]?.id || null;
+        state.selected3DFloorId = null;
         state.building3DRotation = -38;
         state.building3DTilt = 58;
         state.building3DZoom = 1;
@@ -798,3 +798,4 @@ const init = async () => {
 };
 
 init();
+
