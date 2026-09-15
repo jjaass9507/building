@@ -66,21 +66,13 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
     const maxArea = Math.max(1, ...floors.map(item => getValue(item.area)));
     const totalArea = floors.reduce((sum, item) => sum + getValue(item.area), 0);
     const totalHeight = floors.reduce((sum, item) => sum + Math.max(0, Number(item.height || 0)), 0);
-    const selected = floors.find(item => item.id === state.selected3DFloorId) || floors[floors.length - 1] || null;
+    const selected = floors.find(item => item.id === state.selected3DFloorId) || null;
     const floorIntervals = Math.max(0, floors.length - 1);
     const metric = Object.prototype.hasOwnProperty.call(METRICS, state.building3DMetric) ? state.building3DMetric : 'usage';
     const gap = 32;
     const volumeHeight = 30;
     const coreSpan = floorIntervals * gap + volumeHeight + 18;
     const coreBottom = -(floors.length - 1) * gap / 2 - 9;
-    const callouts = [...floors].reverse().map(floor => `
-        <button type="button" class="building-3d-callout ${selected?.id === floor.id ? 'is-selected' : ''} ${floor.status === '未成廠' ? 'is-planned' : ''}"
-            data-floor-callout="${escapeHtml(floor.id)}" aria-pressed="${selected?.id === floor.id}"
-            onclick="window.app.select3DFloor(decodeURIComponent('${encodeHandlerValue(floor.id)}'))">
-            <span class="building-3d-callout-title">${escapeHtml(floor.floor)}${floor.status === '未成廠' ? '<small>未成廠</small>' : ''}</span>
-            <span class="building-3d-single-value">${metricValue(floor, metric, state.unit)}</span>
-        </button>`).join('');
-
     const floorModels = floors.map((floor, index) => {
         const areaRatio = Math.sqrt(Math.max(0, getValue(floor.area)) / maxArea);
         const width = Math.round(230 + 150 * areaRatio);
@@ -94,11 +86,15 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
             <div class="building-3d-floor ${selectedClass} ${plannedClass}" style="--floor-width:${width}px;--floor-depth:${depth}px;--floor-level:${level}px;--floor-order:${index}">
                 <button type="button" class="building-3d-volume" onclick="window.app.select3DFloor(decodeURIComponent('${encodedFloorId}'))" aria-label="查看 ${escapeHtml(floor.floor)} 樓層資訊">
                     <span class="building-3d-top"><span class="building-3d-roof-line"></span></span>
-                    <span class="building-3d-front"><span class="building-3d-window-band"></span></span>
+                    <span class="building-3d-front" data-floor-face="${escapeHtml(floor.id)}">
+                        <span class="building-3d-window-band"></span>
+                        <span class="building-3d-face-info">
+                            <strong>${escapeHtml(floor.floor)}</strong>
+                            <span>${metricValue(floor, metric, state.unit)}</span>
+                        </span>
+                    </span>
                     <span class="building-3d-side"><span class="building-3d-window-band"></span></span>
                     <span class="building-3d-corner"></span>
-                    <span class="building-3d-label">${escapeHtml(floor.floor)}</span>
-                    <span class="building-3d-anchor" data-floor-anchor="${escapeHtml(floor.id)}"></span>
                 </button>
             </div>`;
     }).join('');
@@ -164,8 +160,6 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                                     <div class="building-3d-axis-label">拖曳旋轉 · Ctrl＋滾輪縮放 · 全樓層自動適應畫面</div>
                                     <div class="building-3d-view-note">完整建築量體<small>點選樓層或標籤查看資料</small></div>
                                     ${selectedDetail}
-                                    <svg class="building-3d-connectors" aria-hidden="true"></svg>
-                                    <div class="building-3d-callouts" aria-label="各樓層關鍵資訊">${callouts}</div>
                                     <div class="building-3d-ground"></div>
                                     <div class="building-3d-stage" data-building-3d-stage style="--building-angle:${Number(state.building3DRotation ?? -38)}deg;--building-tilt:${Number(state.building3DTilt ?? 58)}deg;--building-zoom:${Number(state.building3DZoom ?? 1)}">
                                         <div class="building-3d-core" style="--core-span:${coreSpan}px;--core-bottom:${coreBottom}px" aria-hidden="true">
@@ -196,50 +190,51 @@ export const bindBuilding3DInteractions = (state) => {
     if (!scene || !stage || scene.dataset.bound === 'true') return;
     scene.dataset.bound = 'true';
 
-    const connectors = scene.querySelector('.building-3d-connectors');
-    const rail = scene.querySelector('.building-3d-callouts');
-    const updateConnectors = () => {
+    const updateSelectedDetail = () => {
         if (!scene.isConnected) return;
+        const detail = scene.querySelector('.building-3d-overlay-detail');
+        const selectedFace = stage.querySelector('.building-3d-floor.is-selected .building-3d-front');
+        if (!detail || !selectedFace) return;
         const bounds = scene.getBoundingClientRect();
-        const labels = [...rail.querySelectorAll('[data-floor-callout]')];
-        const topPadding = 48;
-        const bottomPadding = 42;
-        const slot = Math.max(3, (scene.clientHeight - topPadding - bottomPadding) / Math.max(1, labels.length));
-        scene.classList.toggle('is-dense', slot < 48);
-        scene.classList.toggle('is-ultra-dense', slot < 28);
-        scene.style.setProperty('--callout-slot', `${slot}px`);
-        connectors.replaceChildren();
-        labels.forEach((label, index) => {
-            const anchor = [...stage.querySelectorAll('[data-floor-anchor]')].find(el => el.dataset.floorAnchor === label.dataset.floorCallout);
-            if (!anchor) return;
-            const a = anchor.getBoundingClientRect();
-            const laneTop = topPadding + index * slot;
-            const labelHeight = Math.min(slot, label.offsetHeight || slot);
-            const targetTop = a.top + a.height / 2 - bounds.top - labelHeight / 2;
-            const top = Math.max(laneTop, Math.min(targetTop, laneTop + Math.max(0, slot - labelHeight)));
-            label.style.top = `${top}px`;
-            const b = label.getBoundingClientRect();
-            const y = b.top + b.height / 2;
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            const x1 = a.right - bounds.left, y1 = a.top + a.height / 2 - bounds.top;
-            const x2 = b.left - bounds.left, y2 = y - bounds.top;
-            line.setAttribute('d', `M ${x1} ${y1} H ${x2 - 18} V ${y2} H ${x2}`);
-            line.setAttribute('class', label.classList.contains('is-selected') ? 'is-selected' : '');
-            connectors.append(line);
-        });
+        const faceBounds = selectedFace.getBoundingClientRect();
+        const detailWidth = detail.offsetWidth;
+        const detailHeight = detail.offsetHeight;
+        const preferredLeft = faceBounds.right - bounds.left + 18;
+        const alternateLeft = faceBounds.left - bounds.left - detailWidth - 18;
+        const left = preferredLeft + detailWidth < scene.clientWidth - 8 ? preferredLeft : Math.max(8, alternateLeft);
+        const faceCenterY = faceBounds.top + faceBounds.height / 2 - bounds.top;
+        const top = Math.max(8, Math.min(scene.clientHeight - detailHeight - 8, faceCenterY - detailHeight / 2));
+        detail.style.transform = `translate3d(${left}px, ${top}px, 0)`;
     };
     const fitView = () => {
         if (!scene.isConnected) return;
+        stage.style.left = '50%';
+        stage.style.top = '52%';
         stage.style.setProperty('--building-zoom', '1');
-        const faces = [...stage.querySelectorAll('.building-3d-top')].map(el => el.getBoundingClientRect());
+        const modelSelector = '.building-3d-top,.building-3d-front,.building-3d-side,.building-3d-podium > span,.building-3d-roof-cap > span';
+        const modelBounds = () => [...stage.querySelectorAll(modelSelector)].map(el => el.getBoundingClientRect());
+        const faces = modelBounds();
         if (!faces.length) return;
         const width = Math.max(...faces.map(b => b.right)) - Math.min(...faces.map(b => b.left));
         const height = Math.max(...faces.map(b => b.bottom)) - Math.min(...faces.map(b => b.top));
-        const availableWidth = Math.max(100, rail.offsetLeft - 44);
-        const availableHeight = Math.max(120, scene.clientHeight - 100);
+        const availableWidth = Math.max(160, scene.clientWidth - 100);
+        const availableHeight = Math.max(120, scene.clientHeight - 80);
         const fit = Math.min(1.08, availableWidth / Math.max(1, width), availableHeight / Math.max(1, height));
         stage.style.setProperty('--building-zoom', String(Math.max(.035, fit) * Number(state.building3DZoom ?? 1)));
-        updateConnectors();
+        requestAnimationFrame(() => {
+            if (!scene.isConnected) return;
+            const scaled = modelBounds();
+            const left = Math.min(...scaled.map(b => b.left));
+            const right = Math.max(...scaled.map(b => b.right));
+            const top = Math.min(...scaled.map(b => b.top));
+            const bottom = Math.max(...scaled.map(b => b.bottom));
+            const sceneBounds = scene.getBoundingClientRect();
+            const shiftX = sceneBounds.left + scene.clientWidth / 2 - (left + right) / 2;
+            const shiftY = sceneBounds.top + scene.clientHeight / 2 - (top + bottom) / 2;
+            stage.style.left = `${scene.clientWidth / 2 + shiftX}px`;
+            stage.style.top = `${scene.clientHeight * .52 + shiftY}px`;
+            requestAnimationFrame(updateSelectedDetail);
+        });
     };
     requestAnimationFrame(fitView);
     const observer = new ResizeObserver(() => {
@@ -262,7 +257,7 @@ export const bindBuilding3DInteractions = (state) => {
     };
 
     scene.addEventListener('pointerdown', event => {
-        if (event.button !== 0 || event.target.closest('button, .building-3d-callouts, .building-3d-overlay-detail')) return;
+        if (event.button !== 0 || event.target.closest('button, .building-3d-overlay-detail')) return;
         dragging = true;
         startX = event.clientX;
         startY = event.clientY;
@@ -297,3 +292,4 @@ export const bindBuilding3DInteractions = (state) => {
         applyView();
     }, { passive: false });
 };
+
