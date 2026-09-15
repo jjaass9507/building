@@ -109,6 +109,39 @@ def _number(value: Any, field: str) -> float:
     return number
 
 
+_HEIGHT_VALUE_PATTERN = re.compile(
+    r"^([+-]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s*(cm|公分|m|公尺|meter|meters)?$",
+    re.IGNORECASE,
+)
+
+
+def _height_cm(value: Any, field: str) -> float:
+    """將高度統一為 cm，並相容早期以 M／cm 字串保存的資料。"""
+    if value in (None, ""):
+        return 0.0
+
+    if isinstance(value, str):
+        match = _HEIGHT_VALUE_PATTERN.fullmatch(value.strip().replace("，", ","))
+        if not match:
+            raise BuildingDataError(
+                f"欄位「{field}」必須是數字（例如 350、350cm 或 3.5m）。"
+            )
+        number = _number(match.group(1).replace(",", ""), field)
+        unit = (match.group(2) or "").lower()
+        if unit in {"m", "公尺", "meter", "meters"}:
+            return number * 100
+        if unit in {"cm", "公分"}:
+            return number
+    else:
+        number = _number(value, field)
+
+    # 舊版 Excel 的欄名為 M，但資料曾直接存進 cm 欄位；高度小於 100
+    # 且未標示單位時視為公尺，避免匯出時誤顯示成 0.035 M。
+    if number and abs(number) < 100:
+        return number * 100
+    return number
+
+
 def _stable_id(prefix: str, *parts: str) -> str:
     value = "|".join(_text(part).lower() for part in parts)
     return f"{prefix}-{uuid.uuid5(uuid.NAMESPACE_URL, value)}"
@@ -194,7 +227,8 @@ def normalize_dataset(data: Any) -> List[Dict[str, Any]]:
                 "進駐製程": _text(source_floor.get("進駐製程")),
             }
             for field in NUMERIC_FLOOR_FIELDS:
-                floor[field] = _number(source_floor.get(field), field)
+                normalizer = _height_cm if field in {"樓層高度(cm)", "無塵室淨高(cm)"} else _number
+                floor[field] = normalizer(source_floor.get(field), field)
 
             facility_value, facility_details = _facility_value(source_floor.get("廠務設施面積(M2)"))
             floor["廠務設施面積(M2)"] = {
