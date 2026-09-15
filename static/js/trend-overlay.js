@@ -198,16 +198,16 @@ function renderBuildingAxisDetails(data, metric) {
         }
         const count = row.buildings?.length || 0;
         const annual = fmt(row.annual, metric);
-        return `<details ${count ? 'data-trend-axis-year' : ''} class="group min-w-0 text-center">
-          <summary class="mx-auto inline-flex max-w-full cursor-pointer list-none flex-col items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-1.5 py-1 text-[10px] font-black text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600">
-            <span class="inline-flex max-w-full items-center gap-1"><span class="truncate">${count ? `新增 ${count} 棟` : '無新增'}</span>${count ? '<i data-lucide="chevron-down" class="h-3 w-3 shrink-0 transition-transform group-open:rotate-180"></i>' : ''}</span>
+        return `<div class="min-w-0 text-center">
+          <div class="mx-auto inline-flex max-w-full flex-col items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-1.5 py-1 text-[10px] font-black text-slate-600 dark:text-slate-300">
+            <span class="inline-flex max-w-full items-center gap-1"><span class="truncate">${count ? `新增 ${count} 棟` : '無新增'}</span></span>
             ${count ? `<span class="whitespace-nowrap font-mono text-blue-600 dark:text-blue-300">+${annual.val} ${annual.unit}</span>` : ''}
-          </summary>
-          ${count ? `<div class="mt-1 divide-y divide-blue-100 overflow-hidden rounded border border-blue-100 dark:divide-blue-900/60 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/30 text-[10px] font-bold leading-4 text-blue-700 dark:text-blue-300">${(row.buildingDetails || []).map((item) => {
+          </div>
+          ${count ? `<div data-trend-axis-year hidden class="mt-1 divide-y divide-blue-100 overflow-hidden rounded border border-blue-100 dark:divide-blue-900/60 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/30 text-[10px] font-bold leading-4 text-blue-700 dark:text-blue-300">${(row.buildingDetails || []).map((item) => {
             const area = fmt(item.area, metric);
             return `<div class="px-1 py-1.5"><div class="break-words">${escapeHtml(item.name)}</div><div class="whitespace-nowrap font-mono">+${area.val} ${area.unit}</div></div>`;
           }).join('')}</div>` : ''}
-        </details>`;
+        </div>`;
       }).join('')}
     </div>
     <p class="mt-2 text-center text-[10px] font-bold text-slate-400">各年度顯示新增總面積；可一鍵展開或收合所有廠棟名稱與個別新增面積，預設收合。</p>
@@ -218,7 +218,7 @@ function bindBuildingAxisToggles() {
   document.querySelectorAll('[data-trend-axis-toggle]').forEach((button) => {
     const metricKey = button.getAttribute('data-trend-axis-toggle');
     const container = document.getElementById(`trend-axis-details-${metricKey}`);
-    const details = Array.from(container?.querySelectorAll('details[data-trend-axis-year]') || []);
+    const details = Array.from(container?.querySelectorAll('[data-trend-axis-year]') || []);
     const label = button.querySelector('[data-trend-axis-toggle-label]');
     if (!details.length || !label) {
       button.disabled = true;
@@ -226,18 +226,17 @@ function bindBuildingAxisToggles() {
     }
 
     const syncButton = () => {
-      const allExpanded = details.every((item) => item.open);
+      const allExpanded = details.every((item) => !item.hidden);
       button.setAttribute('aria-expanded', String(allExpanded));
       label.textContent = allExpanded ? '全部收合' : '全部展開';
     };
 
     button.addEventListener('click', (event) => {
       event.stopPropagation();
-      const shouldExpand = !details.every((item) => item.open);
-      details.forEach((item) => { item.open = shouldExpand; });
+      const shouldExpand = !details.every((item) => !item.hidden);
+      details.forEach((item) => { item.hidden = !shouldExpand; });
       syncButton();
     });
-    details.forEach((item) => item.addEventListener('toggle', syncButton));
     syncButton();
   });
 }
