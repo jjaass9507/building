@@ -12,6 +12,7 @@ secret_key.txt
 uploads/
 processed/
 data_backups/
+data_changes.json
 
 # office temp files
 ~$*.xlsx

@@ -78,6 +78,17 @@ const createTrendButton = () => `
         <i data-lucide="line-chart" class="w-3.5 h-3.5"></i> 成長趨勢
     </button>`;
 
+const createExportButton = () => `
+    <details data-export-menu="true" class="relative">
+        <summary class="flex cursor-pointer list-none items-center gap-1 rounded border border-slate-200 bg-white px-3 py-1 text-base font-bold text-slate-600 transition-all hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
+            <i data-lucide="sheet" class="h-3.5 w-3.5"></i> 匯出 Excel
+        </summary>
+        <div class="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+            <button type="button" onclick="window.buildingDataAdmin?.export('readable'); this.closest('details').removeAttribute('open')" class="block w-full px-4 py-2 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">人員閱讀版</button>
+            <button type="button" onclick="window.buildingDataAdmin?.export('standard'); this.closest('details').removeAttribute('open')" class="block w-full px-4 py-2 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">標準資料版</button>
+        </div>
+    </details>`;
+
 const createCompareTableButton = () => `
     <button onclick="window.app.toggleCompareTable()" class="flex items-center gap-1 px-3 py-1 rounded text-base transition-all ${state.isCompareTableOpen ? 'bg-slate-700 dark:bg-blue-600 text-white shadow-sm font-bold border border-slate-700 dark:border-blue-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-slate-700 font-bold'}">
         <i data-lucide="table-2" class="w-3.5 h-3.5"></i> 比較表
@@ -124,7 +135,7 @@ const injectHeaderButtons = (headerHtml) => {
     if (!nextHtml.includes('openTrendModal')) {
         nextHtml = nextHtml.replace(
             /(<\/div>\s*<\/div>\s*<div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"><\/div>)/,
-            `${createCompareTableButton()}${createTrendButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
+            `${createCompareTableButton()}${createTrendButton()}${createExportButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
         );
     }
 
@@ -494,10 +505,17 @@ const renderAdminUploadPanel = () => {
                     </div>
                     <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">上傳樓層面積資訊 Excel（.xlsx）後，系統會先備份上一版 data.json，再更新目前資料。</p>
                 </div>
-                <form class="flex flex-col sm:flex-row gap-2 sm:items-center" onsubmit="window.app.uploadDataFile(event)">
-                    <input id="admin-data-file" name="file" type="file" accept=".xlsx" class="block w-full sm:w-80 text-sm text-slate-500 dark:text-slate-300 file:mr-4 file:rounded-full file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-sm file:font-bold file:text-white hover:file:bg-slate-700 dark:file:bg-blue-600 dark:hover:file:bg-blue-500" ${state.isUploading ? 'disabled' : ''}>
-                    <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" ${state.isUploading ? 'disabled' : ''}>${state.isUploading ? '更新中...' : '上傳並更新'}</button>
-                </form>
+                <div class="flex flex-col gap-2 xl:items-end">
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" onclick="window.buildingDataAdmin?.open()" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-black text-white hover:bg-slate-700 dark:bg-blue-600 dark:hover:bg-blue-500"><i data-lucide="table-properties" class="mr-1 inline h-4 w-4"></i>資料維護</button>
+                        <button type="button" onclick="window.buildingDataAdmin?.export('readable')" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">人員閱讀版 Excel</button>
+                        <button type="button" onclick="window.buildingDataAdmin?.export('standard')" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">標準資料版 Excel</button>
+                    </div>
+                    <form class="flex flex-col sm:flex-row gap-2 sm:items-center" onsubmit="window.app.uploadDataFile(event)">
+                        <input id="admin-data-file" name="file" type="file" accept=".xlsx" class="block w-full sm:w-80 text-sm text-slate-500 dark:text-slate-300 file:mr-4 file:rounded-full file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-sm file:font-bold file:text-white hover:file:bg-slate-700 dark:file:bg-blue-600 dark:hover:file:bg-blue-500" ${state.isUploading ? 'disabled' : ''}>
+                        <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60" ${state.isUploading ? 'disabled' : ''}>${state.isUploading ? '更新中...' : '上傳並更新'}</button>
+                    </form>
+                </div>
             </div>
             ${statusHtml}
         </section>`;
@@ -762,6 +780,17 @@ window.app = {
 document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && state.isBuilding3DOpen) {
         window.app.closeBuilding3D();
+    }
+});
+
+window.addEventListener('building-data-saved', async () => {
+    try {
+        await loadData();
+        state.selectedZone = null;
+        state.selectedBuilding = null;
+        render();
+    } catch (error) {
+        console.error('建物資料重新載入失敗', error);
     }
 });
 

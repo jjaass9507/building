@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import shutil
 from typing import Any, Dict, List, Optional
 
 # --- 欄位對應設定 ---
@@ -55,6 +56,49 @@ JOIN_KEY = '棟別'
 UNFINISHED_STATUS = '未成廠'
 UNKNOWN_FLOOR_LABEL = 'ALL'
 OPTIONAL_FLOOR_COLUMNS = {'預計成廠年份'}
+STANDARD_SHEET_MASTER = 'building_master'
+STANDARD_SHEET_DETAIL = 'floor_area_detail'
+
+STANDARD_BUILDING_COLUMNS = {
+    'building_id': '_building_id',
+    'building_code': '棟別',
+    'site_area_m2': '基地面積(M2)',
+    'floor_area_ratio': '容積率',
+    'building_coverage_ratio': '建蔽率',
+    'excavation_depth_m': '開挖深度(M)',
+    'seismic_coefficient_gal': '耐震係數(gal)',
+    'car_parking_spaces': '汽車停車位',
+    'motorcycle_parking_spaces': '機車停車位',
+}
+
+STANDARD_FLOOR_COLUMNS = {
+    'floor_id': '_floor_id',
+    'floor_name': '樓層',
+    'status': '狀態',
+    'expected_completion_year': '預計成廠年份',
+    'process_name': '進駐製程',
+    'floor_height_cm': '樓層高度(cm)',
+    'cleanroom_clear_height_cm': '無塵室淨高(cm)',
+    'floor_area_m2': '樓地板面積(M2)',
+    'cleanroom_area_m2': '無塵室面積(M2)',
+    'production_support_area_m2': '生產週邊(M2)',
+    'public_area_m2': '公設(含其他)(公式)(M2)',
+    'floor_load_kgf_m2': '樓層載重kgf/m2',
+}
+
+STANDARD_FACILITY_COLUMNS = {
+    'facility_pure_water_m2': '純水',
+    'facility_wastewater_m2': '廢水',
+    'facility_plumbing_m2': '給排水',
+    'facility_hvac_m2': '空調',
+    'facility_exhaust_m2': '抽氣',
+    'facility_gas_m2': '氣體',
+    'facility_power_m2': '電力',
+    'facility_low_voltage_m2': '弱電',
+    'facility_fire_m2': '消防',
+    'facility_monitoring_m2': '監控',
+    'facility_other_m2': '其他',
+}
 
 
 class DataProcessError(Exception):
@@ -165,6 +209,95 @@ def excel_sheets_to_nested_data(file_path: str, warnings: Optional[List[str]] = 
     return final_data
 
 
+def standard_excel_to_nested_data(file_path: str) -> List[Dict[str, Any]]:
+    """將平台匯出的固定英文欄位標準格式 Excel 還原為前端巢狀資料。"""
+    pd = get_pandas()
+    try:
+        df_master = pd.read_excel(file_path, sheet_name=STANDARD_SHEET_MASTER)
+        df_detail = pd.read_excel(file_path, sheet_name=STANDARD_SHEET_DETAIL)
+    except ValueError as exc:
+        raise DataProcessError(
+            f"標準格式匯入失敗：請確認工作表 '{STANDARD_SHEET_MASTER}' 與 '{STANDARD_SHEET_DETAIL}' 均存在。"
+        ) from exc
+
+    required_master = {'building_id', 'building_code'}
+    required_detail = {'floor_id', 'building_id', 'floor_name'}
+    missing_master = sorted(required_master - set(df_master.columns))
+    missing_detail = sorted(required_detail - set(df_detail.columns))
+    if missing_master:
+        raise DataProcessError(f"標準格式的 building_master 缺少欄位：{missing_master}")
+    if missing_detail:
+        raise DataProcessError(f"標準格式的 floor_area_detail 缺少欄位：{missing_detail}")
+
+    buildings_by_id: Dict[str, Dict[str, Any]] = {}
+    final_data: List[Dict[str, Any]] = []
+    for index, row in enumerate(df_master.to_dict(orient='records'), start=2):
+        building_id = '' if pd.isna(row.get('building_id')) else str(row.get('building_id')).strip()
+        building_code = '' if pd.isna(row.get('building_code')) else str(row.get('building_code')).strip()
+        if not building_id or not building_code:
+            raise DataProcessError(f"building_master 第 {index} 列必須填寫 building_id 與 building_code。")
+        if building_id in buildings_by_id:
+            raise DataProcessError(f"building_master 的 building_id 重複：{building_id}")
+
+        building: Dict[str, Any] = {'樓層': []}
+        for source, target in STANDARD_BUILDING_COLUMNS.items():
+            value = row.get(source)
+            if pd.isna(value):
+                value = '' if target in ('_building_id', '棟別') else 0
+            building[target] = value
+        buildings_by_id[building_id] = building
+        final_data.append(building)
+
+    for index, row in enumerate(df_detail.to_dict(orient='records'), start=2):
+        building_id = '' if pd.isna(row.get('building_id')) else str(row.get('building_id')).strip()
+        if building_id not in buildings_by_id:
+            raise DataProcessError(f"floor_area_detail 第 {index} 列的 building_id 找不到對應建物：{building_id}")
+
+        floor: Dict[str, Any] = {}
+        for source, target in STANDARD_FLOOR_COLUMNS.items():
+            value = row.get(source)
+            if pd.isna(value):
+                value = '' if target in ('_floor_id', '樓層', '狀態', '預計成廠年份', '進駐製程') else 0
+            floor[target] = value
+
+        details = {}
+        for source, target in STANDARD_FACILITY_COLUMNS.items():
+            value = row.get(source)
+            if not pd.isna(value) and to_float(value) != 0:
+                details[target] = to_float(value)
+        facility_value = row.get('facility_area_m2')
+        floor[FACILITY_MAIN_KEY] = {
+            'value': 0 if pd.isna(facility_value) else to_float(facility_value),
+            'details': details,
+        }
+        buildings_by_id[building_id]['樓層'].append(floor)
+
+    return final_data
+
+
+def process_standard_excel_file(
+    input_path: str,
+    cleaned_excel_path: str,
+    json_output_path: str,
+) -> Dict[str, Any]:
+    final_data = standard_excel_to_nested_data(input_path)
+    os.makedirs(os.path.dirname(cleaned_excel_path), exist_ok=True)
+    os.makedirs(os.path.dirname(json_output_path), exist_ok=True)
+    if os.path.abspath(input_path) != os.path.abspath(cleaned_excel_path):
+        shutil.copy2(input_path, cleaned_excel_path)
+    with open(json_output_path, 'w', encoding='utf-8') as f:
+        json.dump(final_data, f, ensure_ascii=False, indent=4, default=str)
+    return {
+        "success": True,
+        "rows": sum(len(building.get('樓層') or []) for building in final_data),
+        "buildings": len(final_data),
+        "warnings": [],
+        "cleaned_excel_path": cleaned_excel_path,
+        "json_output_path": json_output_path,
+        "input_format": "standard",
+    }
+
+
 def process_excel_file(input_path: str, cleaned_excel_path: str, json_output_path: str) -> Dict[str, Any]:
     """
     將使用者上傳的原始 Excel 清洗成標準格式 Excel，再轉成 data.json。
@@ -181,6 +314,15 @@ def process_excel_file(input_path: str, cleaned_excel_path: str, json_output_pat
     """
     pd = get_pandas()
     warnings: List[str] = []
+
+    try:
+        with pd.ExcelFile(input_path) as excel_file:
+            sheet_names = set(excel_file.sheet_names)
+    except Exception as exc:
+        raise DataProcessError(f"讀取 Excel 失敗：{exc}") from exc
+
+    if {STANDARD_SHEET_MASTER, STANDARD_SHEET_DETAIL}.issubset(sheet_names):
+        return process_standard_excel_file(input_path, cleaned_excel_path, json_output_path)
 
     try:
         df = pd.read_excel(input_path, header=1)

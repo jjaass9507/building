@@ -5,7 +5,7 @@ import secrets
 import base64
 import struct
 import time
-from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for, send_file
 import json
 import logging
 from datetime import datetime, timedelta
@@ -13,6 +13,17 @@ from functools import wraps
 from werkzeug.utils import secure_filename
 
 from data_processor import DataProcessError, process_excel_file
+from building_data_manager import (
+    BuildingDataError,
+    append_audit_record,
+    build_readable_workbook,
+    build_standard_workbook,
+    dataset_counts,
+    dataset_revision,
+    load_audit_records,
+    normalize_dataset,
+    summarize_changes,
+)
 
 # --- 1. 路徑處理邏輯 ---
 
@@ -35,6 +46,7 @@ backup_dir = os.path.join(base_dir, 'data_backups')
 utility_backup_dir = os.path.join(base_dir, 'utility_trend_backups')
 processed_dir = os.path.join(base_dir, 'processed')
 cleaned_excel_path = os.path.join(processed_dir, '樓層面積資訊_系統匯入檔.xlsx')
+data_changes_file_path = os.path.join(base_dir, 'data_changes.json')
 
 ALLOWED_UPLOAD_EXTENSIONS = {'.xlsx'}
 
@@ -571,6 +583,26 @@ def backup_current_data(username):
     shutil.copy2(data_file_path, backup_path)
     return backup_path
 
+
+def load_current_data():
+    if not os.path.exists(data_file_path):
+        return []
+    with open(data_file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise BuildingDataError("data.json 根節點必須是陣列。")
+    return data
+
+
+def write_current_data(data):
+    """以暫存檔原子替換目前資料，避免寫入中斷留下半份 JSON。"""
+    ensure_runtime_dirs()
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+    temp_path = os.path.join(processed_dir, f"data_maintenance_pending_{timestamp}.json")
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+    os.replace(temp_path, data_file_path)
+
 def create_default_utility_trends():
     return {
         "schema_version": "1.0",
@@ -803,13 +835,141 @@ def get_me():
 @require_roles("admin", "user", "viewer")
 def get_data():
     try:
-        if not os.path.exists(data_file_path):
-            return jsonify([])
-        with open(data_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return jsonify(data)
+        return jsonify(load_current_data())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/export-data/<export_mode>')
+@require_roles("admin", "user", "viewer")
+def export_building_data(export_mode):
+    if export_mode not in ('readable', 'standard'):
+        return jsonify({"error": "invalid_export_mode", "message": "匯出格式僅支援 readable 或 standard。"}), 400
+
+    username = get_current_user()
+    try:
+        data = load_current_data()
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if export_mode == 'readable':
+            workbook = build_readable_workbook(data, load_audit_records(data_changes_file_path), username)
+            filename = f"建物面積_人員閱讀版_{timestamp}.xlsx"
+            action = 'Export Readable Building Data'
+        else:
+            workbook = build_standard_workbook(data, username, load_audit_records(data_changes_file_path))
+            filename = f"建物面積_標準資料版_{timestamp}.xlsx"
+            action = 'Export Standard Building Data'
+
+        log_user_access(username, action=action, extra=f"Buildings: {len(data)}")
+        return send_file(
+            workbook,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except (BuildingDataError, ValueError) as e:
+        return jsonify({"error": "export_validation_failed", "message": str(e)}), 400
+    except Exception as e:
+        logging.exception("Unexpected building data export error")
+        return jsonify({"error": "export_failed", "message": str(e)}), 500
+
+
+@app.route('/api/admin/building-data', methods=['GET'])
+@require_roles("admin")
+def get_building_data_for_maintenance():
+    try:
+        data = normalize_dataset(load_current_data())
+        return jsonify({
+            "success": True,
+            "data": data,
+            "revision": dataset_revision(data),
+            "counts": dataset_counts(data),
+            "audit_records": list(reversed(load_audit_records(data_changes_file_path)[-30:]))
+        })
+    except (BuildingDataError, ValueError) as e:
+        return jsonify({"error": "data_validation_failed", "message": str(e)}), 400
+    except Exception as e:
+        logging.exception("Unexpected building maintenance load error")
+        return jsonify({"error": "load_failed", "message": str(e)}), 500
+
+
+@app.route('/api/admin/building-data', methods=['POST'])
+@require_roles("admin")
+def save_building_data_from_maintenance():
+    username = get_current_user()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_json", "message": "請提供 JSON 格式資料。"}), 400
+
+    reason = str(payload.get('reason') or '').strip()
+    if not reason:
+        return jsonify({"error": "missing_reason", "message": "請填寫本次異動原因。"}), 400
+    if len(reason) > 500:
+        return jsonify({"error": "reason_too_long", "message": "異動原因不可超過 500 字。"}), 400
+
+    effective_date = str(payload.get('effective_date') or '').strip()
+    try:
+        datetime.strptime(effective_date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({"error": "invalid_effective_date", "message": "請填寫有效的生效日期。"}), 400
+
+    change_type = str(payload.get('change_type') or '').strip().upper()
+    allowed_change_types = {'ADD', 'ADJUST', 'EXPAND', 'REDUCE', 'DEMOLISH'}
+    if change_type not in allowed_change_types:
+        return jsonify({"error": "invalid_change_type", "message": "請選擇有效的異動類型。"}), 400
+
+    source_reference = str(payload.get('source_reference') or '').strip()
+    if len(source_reference) > 500:
+        return jsonify({"error": "source_reference_too_long", "message": "資料來源不可超過 500 字。"}), 400
+
+    try:
+        before = normalize_dataset(load_current_data())
+        current_revision = dataset_revision(before)
+        expected_revision = str(payload.get('revision') or '')
+        if expected_revision and expected_revision != current_revision:
+            return jsonify({
+                "error": "revision_conflict",
+                "message": "資料已被其他管理人員更新，請重新載入後再修改。",
+                "current_revision": current_revision
+            }), 409
+
+        after = normalize_dataset(payload.get('data'))
+        summary = summarize_changes(before, after)
+        if before == after:
+            return jsonify({"error": "no_changes", "message": "資料內容沒有變更。"}), 400
+
+        backup_path = backup_current_data(username)
+        write_current_data(after)
+        new_revision = dataset_revision(after)
+        audit_record = {
+            "changed_at": datetime.now().isoformat(timespec='seconds'),
+            "effective_date": effective_date,
+            "change_type": change_type,
+            "changed_by": username,
+            "reason": reason,
+            "source_reference": source_reference,
+            "revision_before": current_revision,
+            "revision_after": new_revision,
+            "backup_file": os.path.basename(backup_path) if backup_path else None,
+            "summary": summary,
+            "counts": dataset_counts(after)
+        }
+        append_audit_record(data_changes_file_path, audit_record)
+        log_user_access(username, action='Maintain Building Data', extra=f"Reason: {reason} | Summary: {summary}")
+
+        return jsonify({
+            "success": True,
+            "message": "建物面積資料已更新。",
+            "data": after,
+            "revision": new_revision,
+            "counts": dataset_counts(after),
+            "backup_file": os.path.basename(backup_path) if backup_path else None,
+            "summary": summary
+        })
+    except BuildingDataError as e:
+        return jsonify({"error": "data_validation_failed", "message": str(e)}), 400
+    except Exception as e:
+        logging.exception("Unexpected building maintenance save error")
+        return jsonify({"error": "save_failed", "message": str(e)}), 500
 
 @app.route('/api/utility-trends')
 @require_roles("admin", "user", "viewer")
@@ -882,6 +1042,7 @@ def upload_data_file():
 
     try:
         uploaded_file.save(upload_path)
+        before = normalize_dataset(load_current_data())
         backup_path = backup_current_data(username)
 
         result = process_excel_file(
@@ -890,7 +1051,27 @@ def upload_data_file():
             json_output_path=temp_json_path
         )
 
-        shutil.move(temp_json_path, data_file_path)
+        with open(temp_json_path, 'r', encoding='utf-8') as f:
+            converted_data = json.load(f)
+        after = normalize_dataset(converted_data)
+        write_current_data(after)
+        if os.path.exists(temp_json_path):
+            os.remove(temp_json_path)
+
+        audit_record = {
+            "changed_at": datetime.now().isoformat(timespec='seconds'),
+            "effective_date": datetime.now().strftime('%Y-%m-%d'),
+            "change_type": "IMPORT",
+            "changed_by": username,
+            "reason": f"上傳 Excel：{uploaded_file.filename}",
+            "source_reference": uploaded_file.filename,
+            "revision_before": dataset_revision(before),
+            "revision_after": dataset_revision(after),
+            "backup_file": os.path.basename(backup_path) if backup_path else None,
+            "summary": summarize_changes(before, after),
+            "counts": dataset_counts(after)
+        }
+        append_audit_record(data_changes_file_path, audit_record)
 
         log_user_access(username, action='Upload Data', extra=f"File: {uploaded_file.filename} | Backup: {backup_path or 'none'} | Rows: {result.get('rows')} | Buildings: {result.get('buildings')}")
 
