@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 
-const OVERLAY_VERSION = 'cumulative-area-building-addition-v5';
+const OVERLAY_VERSION = 'axis-buildings-with-area-v7';
 const BASELINE_YEAR = 25;
 const BASELINE_LABEL = 'Y25';
 
@@ -32,8 +32,9 @@ const parseYear = (value) => {
 const formatYearLabel = (year) => year === BASELINE_YEAR || year === 'current' ? BASELINE_LABEL : `Y${year}`;
 const formatRate = (rate) => rate === null || rate === undefined || !Number.isFinite(rate) ? '-' : `${(rate * 100).toFixed(1)}%`;
 const toPing = (value) => value * 0.3025;
-const fmt = (value, metric) => metric.type === 'area' ? formatArea(value, 'ping') : { val: Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }), unit: metric.unit || '' };
-const rawValue = (value, metric) => metric.type === 'area' ? toPing(value) : Number(value || 0);
+const getAreaUnit = () => window.APP_STATE?.unit === 'm2' ? 'm2' : 'ping';
+const fmt = (value, metric) => metric.type === 'area' ? formatArea(value, getAreaUnit()) : { val: Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }), unit: metric.unit || '' };
+const rawValue = (value, metric) => metric.type === 'area' && getAreaUnit() === 'ping' ? toPing(value) : Number(value || 0);
 const chartValue = rawValue;
 const formatChartNumber = (value, metric) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: metric.type === 'area' ? 0 : 2 });
 const escapeHtml = (value) => String(value ?? '')
@@ -176,20 +177,35 @@ async function buildTrendData() {
 function destroyCharts() { Object.values(charts).forEach((chart) => chart?.destroy?.()); charts = {}; }
 function closeTrendOverlay() { destroyCharts(); document.getElementById('trend-overlay-v2')?.remove(); }
 function renderMetricButton(metric) { const active = selected.includes(metric.key); return `<button data-trend-metric="${metric.key}" class="px-3 py-2 rounded-xl text-sm font-black transition-all ${active ? 'bg-blue-600 text-white shadow-sm' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'}">${active ? '✓ ' : ''}${metric.label}</button>`; }
-function renderBuildingBadges(data, metric) {
+function renderAreaUnitButton(unit, label) {
+  const active = getAreaUnit() === unit;
+  return `<button data-trend-unit="${unit}" class="px-3 py-2 text-sm font-black transition-colors ${active ? 'bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'}">${label}</button>`;
+}
+function renderBuildingAxisDetails(data, metric) {
   if (metric.type !== 'area') return '';
-  const rows = data.rows.filter((row) => row.buildings?.length);
-  if (!rows.length) {
-    return '<div class="mb-3 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 px-3 py-2 text-xs font-bold text-slate-400">目前沒有設定 Y26 之後的新增廠棟。</div>';
-  }
-
-  return `<div class="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">${rows.map((row) => `
-    <div class="flex min-w-0 items-start gap-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-3 py-2">
-      <span class="shrink-0 rounded bg-slate-800 dark:bg-slate-100 px-1.5 py-0.5 text-[11px] font-black text-white dark:text-slate-900">${row.label}</span>
-      <span class="min-w-0 text-xs font-bold leading-5 text-slate-600 dark:text-slate-300">
-        新增：${row.buildings.map(escapeHtml).join('、')}
-      </span>
-    </div>`).join('')}</div>`;
+  const columnCount = Math.max(data.rows.length, 1);
+  return `<div id="trend-axis-details-${metric.key}" class="mt-1 border-t border-slate-100 dark:border-slate-800 pt-2">
+    <div class="grid items-start gap-1" style="grid-template-columns: repeat(${columnCount}, minmax(0, 1fr));">
+      ${data.rows.map((row, index) => {
+        if (index === 0) {
+          return '<div class="px-1 text-center text-[10px] font-bold text-slate-400">現況基準</div>';
+        }
+        const count = row.buildings?.length || 0;
+        const annual = fmt(row.annual, metric);
+        return `<details class="group min-w-0 text-center">
+          <summary class="mx-auto inline-flex max-w-full cursor-pointer list-none flex-col items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-1.5 py-1 text-[10px] font-black text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600">
+            <span class="inline-flex max-w-full items-center gap-1"><span class="truncate">${count ? `新增 ${count} 棟` : '無新增'}</span>${count ? '<i data-lucide="chevron-down" class="h-3 w-3 shrink-0 transition-transform group-open:rotate-180"></i>' : ''}</span>
+            ${count ? `<span class="whitespace-nowrap font-mono text-blue-600 dark:text-blue-300">+${annual.val} ${annual.unit}</span>` : ''}
+          </summary>
+          ${count ? `<div class="mt-1 divide-y divide-blue-100 overflow-hidden rounded border border-blue-100 dark:divide-blue-900/60 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/30 text-[10px] font-bold leading-4 text-blue-700 dark:text-blue-300">${(row.buildingDetails || []).map((item) => {
+            const area = fmt(item.area, metric);
+            return `<div class="px-1 py-1.5"><div class="break-words">${escapeHtml(item.name)}</div><div class="whitespace-nowrap font-mono">+${area.val} ${area.unit}</div></div>`;
+          }).join('')}</div>` : ''}
+        </details>`;
+      }).join('')}
+    </div>
+    <p class="mt-2 text-center text-[10px] font-bold text-slate-400">各年度顯示新增總面積；點擊可展開廠棟名稱與個別新增面積，預設收合。</p>
+  </div>`;
 }
 
 function renderChartSection(metric, trend) {
@@ -224,8 +240,8 @@ function renderChartSection(metric, trend) {
         </div>
       </div>
     </div>
-    ${renderBuildingBadges(data, metric)}
     <div class="h-[360px]"><canvas id="trend-chart-${metric.key}"></canvas></div>
+    ${renderBuildingAxisDetails(data, metric)}
   </section>`;
 }
 
@@ -327,7 +343,7 @@ function exportSelectedTrends(trend) {
     data.rows.forEach((row) => rows.push({
       指標: metric.label,
       年份: row.label,
-      單位: metric.type === 'area' ? '坪' : metric.unit,
+      單位: metric.type === 'area' ? (getAreaUnit() === 'ping' ? '坪' : 'm²') : metric.unit,
       年度新增: rawValue(row.annual, metric),
       年增比例: row.rate == null ? '' : `${(row.rate * 100).toFixed(1)}%`,
       累積總量: rawValue(row.cumulative, metric),
@@ -349,11 +365,18 @@ async function openTrendOverlay() {
   const trend = await buildTrendData(); destroyCharts(); document.getElementById('trend-overlay-v2')?.remove();
   const productionArea = fmt(trend.metrics.production_area?.cumulative.at(-1) || 0, METRICS.production_area);
   const overlay = document.createElement('div'); overlay.id = 'trend-overlay-v2'; overlay.className = 'fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4';
-  overlay.innerHTML = `<section class="w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()"><div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4"><div><div class="flex items-center gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span><h2 class="text-xl font-black text-slate-800 dark:text-slate-100">成長趨勢</h2></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Y25 為現況基準；生產面積 = 無塵室面積 + 生產週邊面積；可匯出目前勾選的趨勢資料。</p></div><div class="flex flex-wrap items-center gap-2">${Object.values(METRICS).map(renderMetricButton).join('')}<button id="trend-export-v2" class="px-3 py-2 rounded-xl text-sm font-black bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"><i data-lucide="download" class="inline-block w-4 h-4 mr-1"></i>匯出XLSX</button><button id="trend-close-v2" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button></div></div><div class="px-6 pt-4"><div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block"><div class="text-sm font-bold text-slate-500 dark:text-slate-300">生產面積合計</div><div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${productionArea.val}<span class="ml-1 text-sm text-slate-400">${productionArea.unit}</span></div><div class="mt-1 text-xs font-bold text-slate-400">無塵室面積 + 生產週邊面積</div></div></div><div class="px-6 py-4 space-y-3">${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個指標</div>'}${renderBuildingTable(trend)}${renderTables(trend)}</div></section>`;
+  overlay.innerHTML = `<section class="w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()"><div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4"><div><div class="flex items-center gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span><h2 class="text-xl font-black text-slate-800 dark:text-slate-100">成長趨勢</h2></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Y25 為現況基準；生產面積 = 無塵室面積 + 生產週邊面積；可匯出目前勾選的趨勢資料。</p></div><div class="flex flex-wrap items-center gap-2">${Object.values(METRICS).map(renderMetricButton).join('')}<div class="inline-flex overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">${renderAreaUnitButton('ping', '坪')}${renderAreaUnitButton('m2', 'm²')}</div><button id="trend-export-v2" class="px-3 py-2 rounded-xl text-sm font-black bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"><i data-lucide="download" class="inline-block w-4 h-4 mr-1"></i>匯出XLSX</button><button id="trend-close-v2" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button></div></div><div class="px-6 pt-4"><div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block"><div class="text-sm font-bold text-slate-500 dark:text-slate-300">生產面積合計</div><div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${productionArea.val}<span class="ml-1 text-sm text-slate-400">${productionArea.unit}</span></div><div class="mt-1 text-xs font-bold text-slate-400">無塵室面積 + 生產週邊面積</div></div></div><div class="px-6 py-4 space-y-3">${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個指標</div>'}${renderBuildingTable(trend)}${renderTables(trend)}</div></section>`;
   overlay.addEventListener('click', closeTrendOverlay); document.body.appendChild(overlay);
   document.getElementById('trend-close-v2')?.addEventListener('click', closeTrendOverlay);
   document.getElementById('trend-export-v2')?.addEventListener('click', (event) => { event.stopPropagation(); exportSelectedTrends(trend); });
   document.querySelectorAll('[data-trend-metric]').forEach((button) => button.addEventListener('click', async (event) => { event.stopPropagation(); const key = button.getAttribute('data-trend-metric'); selected = selected.includes(key) ? selected.filter((item) => item !== key) : [...selected, key]; await openTrendOverlay(); }));
+  document.querySelectorAll('[data-trend-unit]').forEach((button) => button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const unit = button.getAttribute('data-trend-unit');
+    if (!['ping', 'm2'].includes(unit) || unit === getAreaUnit()) return;
+    window.app?.updateState?.('unit', unit);
+    await openTrendOverlay();
+  }));
   lucide?.createIcons?.(); drawCharts(trend);
 }
 function drawRoundedRect(ctx, x, y, width, height, radius) {
@@ -385,12 +408,19 @@ function drawCharts(trend) {
     const annual = data.annual.map((value) => chartValue(value, metric));
     const cumulative = data.cumulative.map((value) => chartValue(value, metric));
     const previousCumulative = cumulative.map((value, index) => Math.max(0, value - (annual[index] || 0)));
-    const unit = isArea ? '坪' : metric.unit;
+    const unit = isArea ? (getAreaUnit() === 'ping' ? '坪' : 'm²') : metric.unit;
     const maxAnnual = Math.max(...annual, 0);
     const maxCumulative = Math.max(...cumulative, 0);
 
     const valueLabelPlugin = {
       id: `trendLabels-${key}`,
+      afterLayout(chart) {
+        if (!isArea) return;
+        const axisDetails = document.getElementById(`trend-axis-details-${key}`);
+        if (!axisDetails) return;
+        axisDetails.style.paddingLeft = `${chart.chartArea.left}px`;
+        axisDetails.style.paddingRight = `${Math.max(0, chart.width - chart.chartArea.right)}px`;
+      },
       afterDatasetsDraw(chart) {
         const { ctx, chartArea } = chart;
         const totalElements = chart.getDatasetMeta(isArea ? 1 : 1).data;
