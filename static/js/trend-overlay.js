@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 
-const OVERLAY_VERSION = 'cumulative-area-building-details-v4';
+const OVERLAY_VERSION = 'cumulative-area-building-addition-v5';
 const BASELINE_YEAR = 25;
 const BASELINE_LABEL = 'Y25';
 
@@ -208,7 +208,7 @@ function renderChartSection(metric, trend) {
           <h3 class="text-base font-black text-slate-700 dark:text-slate-100">${metric.label}</h3>
         </div>
         <p class="mt-1 text-xs font-bold text-slate-400">${isArea
-          ? '以 Y25 為現況基準，各年度顯示截至該年的累積面積；下方同步列出當年新增廠棟。'
+          ? '以 Y25 為現況基準；灰色為前期累積，彩色區段為當年新增，柱頂為年度累積面積。'
           : 'Y25 作為累積基準；圖中同時顯示年度新增量與累積需求。'}</p>
       </div>
       <div class="grid grid-cols-2 gap-2 min-w-[300px]">
@@ -219,7 +219,8 @@ function renderChartSection(metric, trend) {
         <div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-2">
           <div class="text-xs font-bold text-slate-500 dark:text-slate-300">最後年度新增</div>
           <div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latestAnnual.val}<span class="ml-1 text-xs text-slate-400">${latestAnnual.unit}</span></div>
-          <div class="truncate text-[11px] font-bold text-slate-400">${isArea && latestBuildings.length ? escapeHtml(latestBuildings.join('、')) : `年增率：${formatRate(data.rates.at(-1))}`}</div>
+          <div class="text-[11px] font-bold text-slate-400">新增比例：${formatRate(data.rates.at(-1))}</div>
+          ${isArea && latestBuildings.length ? `<div class="truncate text-[11px] font-bold text-slate-400">廠棟：${escapeHtml(latestBuildings.join('、'))}</div>` : ''}
         </div>
       </div>
     </div>
@@ -383,6 +384,7 @@ function drawCharts(trend) {
     const isArea = metric.type === 'area';
     const annual = data.annual.map((value) => chartValue(value, metric));
     const cumulative = data.cumulative.map((value) => chartValue(value, metric));
+    const previousCumulative = cumulative.map((value, index) => Math.max(0, value - (annual[index] || 0)));
     const unit = isArea ? '坪' : metric.unit;
     const maxAnnual = Math.max(...annual, 0);
     const maxCumulative = Math.max(...cumulative, 0);
@@ -391,14 +393,13 @@ function drawCharts(trend) {
       id: `trendLabels-${key}`,
       afterDatasetsDraw(chart) {
         const { ctx, chartArea } = chart;
-        const datasetIndex = isArea ? 0 : 1;
-        const elements = chart.getDatasetMeta(datasetIndex).data;
+        const totalElements = chart.getDatasetMeta(isArea ? 1 : 1).data;
         ctx.save();
         ctx.font = 'bold 11px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
-        elements.forEach((element, index) => {
+        totalElements.forEach((element, index) => {
           const value = cumulative[index] || 0;
           if (value <= 0) return;
           const label = `${formatChartNumber(value, metric)} ${unit}`;
@@ -417,22 +418,76 @@ function drawCharts(trend) {
           ctx.fillStyle = textColor;
           ctx.fillText(label, left + width / 2, top + height / 2);
         });
+
+        if (isArea) {
+          const additionElements = chart.getDatasetMeta(1).data;
+          additionElements.forEach((element, index) => {
+            const addition = annual[index] || 0;
+            if (addition <= 0) return;
+
+            const lines = [
+              `+${formatChartNumber(addition, metric)} ${unit}`,
+              `+${formatRate(data.rates[index])}`
+            ];
+            ctx.font = 'bold 10px sans-serif';
+            const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 14;
+            const height = 34;
+            const segmentTop = element.y;
+            const segmentBottom = element.base;
+            const segmentHeight = Math.abs(segmentBottom - segmentTop);
+            let left = element.x - width / 2;
+            let top = segmentTop + (segmentHeight - height) / 2;
+
+            if (segmentHeight < height + 6) {
+              left = element.x + element.width / 2 + 6;
+              top = segmentTop - 2;
+            }
+            left = Math.min(Math.max(left, chartArea.left + 2), chartArea.right - width - 2);
+            top = Math.min(Math.max(top, chartArea.top + 2), chartArea.bottom - height - 2);
+
+            ctx.fillStyle = metric.color;
+            ctx.strokeStyle = isDark ? '#E2E8F0' : '#FFFFFF';
+            ctx.lineWidth = 1;
+            drawRoundedRect(ctx, left, top, width, height, 6);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = '#FFFFFF';
+            lines.forEach((line, lineIndex) => {
+              ctx.fillText(line, left + width / 2, top + 10 + lineIndex * 14);
+            });
+          });
+        }
         ctx.restore();
       }
     };
 
     const datasets = isArea
-      ? [{
-          type: 'bar',
-          label: `${metric.cumulativeLabel} (${unit})`,
-          data: cumulative,
-          borderColor: metric.color,
-          backgroundColor: metric.bg,
-          borderWidth: 2,
-          borderRadius: 6,
-          maxBarThickness: 72,
-          yAxisID: 'cumulativeAxis'
-        }]
+      ? [
+          {
+            type: 'bar',
+            label: `前期累積 (${unit})`,
+            data: previousCumulative,
+            borderColor: isDark ? '#64748B' : '#94A3B8',
+            backgroundColor: isDark ? 'rgba(100,116,139,.42)' : 'rgba(148,163,184,.32)',
+            borderWidth: 1,
+            borderRadius: { bottomLeft: 6, bottomRight: 6 },
+            maxBarThickness: 72,
+            stack: 'cumulative',
+            yAxisID: 'cumulativeAxis'
+          },
+          {
+            type: 'bar',
+            label: `當年新增 (${unit})`,
+            data: annual,
+            borderColor: metric.color,
+            backgroundColor: metric.color,
+            borderWidth: 2,
+            borderRadius: { topLeft: 6, topRight: 6 },
+            maxBarThickness: 72,
+            stack: 'cumulative',
+            yAxisID: 'cumulativeAxis'
+          }
+        ]
       : [
           { type: 'bar', label: `${metric.annualLabel} (${unit})`, data: annual, borderColor: metric.color, backgroundColor: metric.bg, borderWidth: 2, borderRadius: 6, maxBarThickness: 46, yAxisID: 'annualAxis', order: 2 },
           { type: 'line', label: `${metric.cumulativeLabel} (${unit})`, data: cumulative, borderColor: metric.color, backgroundColor: metric.bg, tension: .35, fill: false, pointRadius: 4, pointHoverRadius: 6, yAxisID: 'cumulativeAxis', order: 1 }
@@ -451,13 +506,20 @@ function drawCharts(trend) {
           tooltip: {
             callbacks: {
               label: (ctx) => {
-                if (isArea) return `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}`;
+                if (isArea) {
+                  return ctx.datasetIndex === 1
+                    ? `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}（${formatRate(data.rates[ctx.dataIndex])}）`
+                    : `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}`;
+                }
                 return ctx.dataset.type === 'bar'
                   ? `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}｜年增比例: ${formatRate(data.rates[ctx.dataIndex])}`
                   : `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}`;
               },
               afterLabel: (ctx) => isArea && data.rows[ctx.dataIndex]?.buildings?.length
                 ? `本年新增：${data.rows[ctx.dataIndex].buildings.join('、')}`
+                : '',
+              footer: (items) => isArea && items.length
+                ? `年度累積：${formatChartNumber(cumulative[items[0].dataIndex], metric)} ${unit}`
                 : ''
             }
           }
@@ -465,7 +527,8 @@ function drawCharts(trend) {
         scales: {
           x: {
             ticks: { color: textColor, font: { weight: 'bold' }, maxRotation: 0, autoSkip: false },
-            grid: { display: false }
+            grid: { display: false },
+            stacked: isArea
           },
           annualAxis: {
             display: !isArea,
@@ -478,6 +541,7 @@ function drawCharts(trend) {
           },
           cumulativeAxis: {
             beginAtZero: isArea,
+            stacked: isArea,
             suggestedMax: maxCumulative > 0 ? maxCumulative * 1.15 : 10,
             position: isArea ? 'left' : 'right',
             ticks: { color: textColor, callback: (value) => Number(value).toLocaleString() },
