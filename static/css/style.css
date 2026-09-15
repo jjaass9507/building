@@ -104,13 +104,13 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
     padding:6px 10px; color:#858b89; font-size:11px; font-weight:650; pointer-events:none;
 }
 .building-3d-ground {
-    position:absolute; left:25%; right:330px; bottom:21px; height:24px; z-index:1;
+    position:absolute; left:18%; right:18%; bottom:21px; height:24px; z-index:1;
     border:1px solid rgba(136,133,123,.22); border-radius:50%;
     background:radial-gradient(ellipse at center,rgba(63,68,65,.16),rgba(63,68,65,0) 68%);
     filter:blur(4px); pointer-events:none;
 }
 .building-3d-stage {
-    position:absolute; left:47%; top:52%; width:1px; height:1px; transform-style:preserve-3d;
+    position:absolute; left:50%; top:52%; width:1px; height:1px; transform-style:preserve-3d;
     transform:rotateX(var(--building-tilt)) rotateZ(var(--building-angle)) scale(var(--building-zoom)); transition:none;
 }
 .building-3d-floor {
@@ -130,7 +130,7 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
     box-shadow:0 18px 28px rgba(60,60,53,.16);
 }
 .building-3d-front {
-    left:0; top:100%; width:100%; height:30px; overflow:hidden;
+    left:0; top:100%; width:100%; height:30px; overflow:visible; transform-style:preserve-3d;
     transform:rotateX(-90deg); transform-origin:top; background:#d4d1c9;
 }
 .building-3d-side {
@@ -204,53 +204,30 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 .building-3d-podium > span { border-width:2px; background:#c9c5bb; }
 .building-3d-roof-cap > span { inset:15px; border-color:#8d918d; background:#ebe8e1; }
 
-.building-3d-connectors {
-    position:absolute; inset:0; z-index:3; width:100%; height:100%; pointer-events:none;
+.building-3d-face-info {
+    position:absolute; left:9px; right:9px; top:50%; z-index:5; display:flex; height:21px;
+    transform:translateY(-50%) translateZ(2px); transform-style:preserve-3d;
+    align-items:center; gap:7px; overflow:hidden; border:1px solid rgba(255,255,255,.72);
+    border-left:3px solid #566361; border-radius:2px; background:rgba(255,253,250,.92);
+    box-shadow:0 2px 7px rgba(31,43,40,.18); color:#344044; pointer-events:none;
 }
-.building-3d-connectors path { fill:none; stroke:#9da3a1; stroke-width:1; opacity:.62; }
-.building-3d-connectors path.is-selected { stroke:var(--viewer-accent); stroke-width:2; opacity:1; }
-.building-3d-callouts {
-    position:absolute; right:22px; top:0; bottom:0; z-index:5; width:285px;
-    overflow:hidden; border-left:1px solid #aeb4b1; pointer-events:none;
+.building-3d-face-info strong {
+    display:inline-flex; align-self:stretch; min-width:38px; align-items:center; justify-content:center;
+    background:#525f5d; color:#fff; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10px; font-weight:900; letter-spacing:.02em;
 }
-.building-3d-callout {
-    position:absolute; left:0; width:100%; height:var(--callout-slot,58px); min-height:0; padding:5px 12px 5px 27px;
-    border:0; background:rgba(255,253,250,.78); color:#3c454a; text-align:left; pointer-events:auto; cursor:pointer;
-    overflow:hidden;
+.building-3d-face-info > span {
+    min-width:0; overflow:hidden; padding-right:6px; font-size:10px; font-weight:800;
+    line-height:1; text-overflow:ellipsis; white-space:nowrap;
 }
-.building-3d-callout::before {
-    content:''; position:absolute; left:-5px; top:50%; width:9px; height:9px; transform:translateY(-50%);
-    border:2px solid #f7f5ef; border-radius:50%; background:#717978;
+.building-3d-floor.is-selected .building-3d-face-info {
+    border-color:var(--viewer-accent); border-left-color:var(--viewer-accent); background:#e3f4f1;
 }
-.building-3d-callout:hover { background:#fffdfa; }
-.building-3d-callout.is-selected { background:rgba(227,244,241,.88); }
-.building-3d-callout.is-selected::before { background:var(--viewer-accent); }
-.building-3d-callout.is-planned:not(.is-selected)::before { background:var(--viewer-planned); }
-.building-3d-callout:focus-visible { outline:2px solid var(--viewer-accent); outline-offset:-2px; }
-.building-3d-callout-title {
-    display:flex; align-items:center; gap:8px; margin-bottom:2px; color:#30393d; font-size:15px; font-weight:850;
-}
-.building-3d-callout-title small { color:var(--viewer-planned); font-size:10px; font-weight:700; }
-.building-3d-single-value {
-    display:block; color:#5c6568; font-size:18px; font-weight:650; line-height:1.35; overflow-wrap:anywhere;
-}
-.building-3d-callout.is-selected .building-3d-callout-title,
-.building-3d-callout.is-selected .building-3d-single-value { color:#08746f; }
-.building-3d-scene.is-dense .building-3d-callout {
-    display:flex; align-items:center; gap:8px; padding-block:1px; padding-left:20px;
-}
-.building-3d-scene.is-dense .building-3d-callout-title { flex:0 0 42px; margin:0; font-size:12px; line-height:1; }
-.building-3d-scene.is-dense .building-3d-callout-title small { display:none; }
-.building-3d-scene.is-dense .building-3d-single-value {
-    min-width:0; overflow:hidden; font-size:12px; line-height:1.1; text-overflow:ellipsis; white-space:nowrap;
-}
-.building-3d-scene.is-ultra-dense .building-3d-callout { gap:4px; padding-left:16px; padding-right:4px; }
-.building-3d-scene.is-ultra-dense .building-3d-callout-title { flex-basis:32px; font-size:9px; }
-.building-3d-scene.is-ultra-dense .building-3d-single-value { font-size:9px; }
-.building-3d-scene.is-ultra-dense .building-3d-callout::before { left:-4px; width:7px; height:7px; }
+.building-3d-floor.is-selected .building-3d-face-info strong { background:var(--viewer-accent); }
+.building-3d-floor.is-planned:not(.is-selected) .building-3d-face-info { border-left-color:var(--viewer-planned); }
 
 .building-3d-overlay-detail {
-    position:absolute; left:22px; top:76px; z-index:8; width:275px; pointer-events:auto;
+    position:absolute; left:0; top:0; z-index:9; width:275px; pointer-events:auto;
 }
 .building-3d-detail-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
 .building-3d-detail-heading h3 { margin-top:3px; font-size:17px; line-height:1.25; }
@@ -297,16 +274,13 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 .dark .building-3d-window-band { background-color:#273a3f; }
 .dark .building-3d-core { opacity:.4; }
 .dark .building-3d-podium > span,.dark .building-3d-roof-cap > span { background:#334044; border-color:#667275; }
-.dark .building-3d-callout::before { border-color:#152023; }
-.dark .building-3d-callout-title,.dark .building-3d-single-value { color:#d1d9d7; }
-.dark .building-3d-callout.is-selected { background:rgba(20,110,106,.25); }
+.dark .building-3d-face-info { background:rgba(24,35,38,.94); border-color:#60706d; color:#e4eeeb; }
+.dark .building-3d-floor.is-selected .building-3d-face-info { background:#1d4744; border-color:#24aaa2; }
 .dark .building-3d-layout > aside { background:#151f22; border-color:#354346; }
 .dark .building-3d-detail { background:#1b272a; border-color:#435154; }
 .dark .building-3d-detail h3,.dark .building-3d-facts strong,.dark .building-3d-detail-area strong { color:#edf2f0; }
 
 @media (max-width:1100px) {
-    .building-3d-callouts { width:240px; }
-    .building-3d-stage { left:45%; }
     .building-3d-overlay-detail { width:235px; }
 }
 @media (max-width:767px) {
@@ -316,9 +290,11 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
     .building-3d-layout > div:first-child { overflow:visible !important; }
     .building-3d-canvas { height:520px; overflow:hidden !important; }
     .building-3d-scene { min-width:0; min-height:500px; }
-    .building-3d-stage { left:38%; }
-    .building-3d-callouts { right:6px; width:42%; }
-    .building-3d-overlay-detail { left:8px; top:66px; width:42%; padding:9px; }
+    .building-3d-stage { left:50%; }
+    .building-3d-face-info { left:5px; right:5px; gap:4px; }
+    .building-3d-face-info strong { min-width:30px; font-size:9px; }
+    .building-3d-face-info > span { font-size:9px; }
+    .building-3d-overlay-detail { width:min(235px,62vw); padding:9px; }
     .building-3d-overlay-detail .building-3d-detail-facts { display:none; }
     .building-3d-detail-heading { display:block; }
     .building-3d-status { display:inline-block; margin-top:5px; }
@@ -327,3 +303,4 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 @media (prefers-reduced-motion:reduce) {
     .building-3d-tool,.building-3d-metric-toolbar button,.building-3d-top,.building-3d-front,.building-3d-side { transition:none; }
 }
+
