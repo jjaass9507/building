@@ -110,7 +110,7 @@ def _number(value: Any, field: str) -> float:
 
 
 _HEIGHT_VALUE_PATTERN = re.compile(
-    r"^([+-]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?)\\s*(cm|公分|m|公尺|meter|meters)?$",
+    r"^([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\\s*(cm|公分|m|公尺|meter|meters)?$",
     re.IGNORECASE,
 )
 
