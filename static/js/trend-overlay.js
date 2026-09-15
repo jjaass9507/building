@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 
-const OVERLAY_VERSION = 'axis-buildings-with-area-v7';
+const OVERLAY_VERSION = 'axis-buildings-toggle-all-right-labels-v8';
 const BASELINE_YEAR = 25;
 const BASELINE_LABEL = 'Y25';
 
@@ -185,6 +185,12 @@ function renderBuildingAxisDetails(data, metric) {
   if (metric.type !== 'area') return '';
   const columnCount = Math.max(data.rows.length, 1);
   return `<div id="trend-axis-details-${metric.key}" class="mt-1 border-t border-slate-100 dark:border-slate-800 pt-2">
+    <div class="mb-2 flex justify-end">
+      <button type="button" data-trend-axis-toggle="${metric.key}" aria-expanded="false" class="inline-flex items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-black text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-700 dark:hover:text-blue-300">
+        <i data-lucide="chevrons-up-down" class="h-3.5 w-3.5"></i>
+        <span data-trend-axis-toggle-label>全部展開</span>
+      </button>
+    </div>
     <div class="grid items-start gap-1" style="grid-template-columns: repeat(${columnCount}, minmax(0, 1fr));">
       ${data.rows.map((row, index) => {
         if (index === 0) {
@@ -192,7 +198,7 @@ function renderBuildingAxisDetails(data, metric) {
         }
         const count = row.buildings?.length || 0;
         const annual = fmt(row.annual, metric);
-        return `<details class="group min-w-0 text-center">
+        return `<details ${count ? 'data-trend-axis-year' : ''} class="group min-w-0 text-center">
           <summary class="mx-auto inline-flex max-w-full cursor-pointer list-none flex-col items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-1.5 py-1 text-[10px] font-black text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600">
             <span class="inline-flex max-w-full items-center gap-1"><span class="truncate">${count ? `新增 ${count} 棟` : '無新增'}</span>${count ? '<i data-lucide="chevron-down" class="h-3 w-3 shrink-0 transition-transform group-open:rotate-180"></i>' : ''}</span>
             ${count ? `<span class="whitespace-nowrap font-mono text-blue-600 dark:text-blue-300">+${annual.val} ${annual.unit}</span>` : ''}
@@ -204,8 +210,36 @@ function renderBuildingAxisDetails(data, metric) {
         </details>`;
       }).join('')}
     </div>
-    <p class="mt-2 text-center text-[10px] font-bold text-slate-400">各年度顯示新增總面積；點擊可展開廠棟名稱與個別新增面積，預設收合。</p>
+    <p class="mt-2 text-center text-[10px] font-bold text-slate-400">各年度顯示新增總面積；可一鍵展開或收合所有廠棟名稱與個別新增面積，預設收合。</p>
   </div>`;
+}
+
+function bindBuildingAxisToggles() {
+  document.querySelectorAll('[data-trend-axis-toggle]').forEach((button) => {
+    const metricKey = button.getAttribute('data-trend-axis-toggle');
+    const container = document.getElementById(`trend-axis-details-${metricKey}`);
+    const details = Array.from(container?.querySelectorAll('details[data-trend-axis-year]') || []);
+    const label = button.querySelector('[data-trend-axis-toggle-label]');
+    if (!details.length || !label) {
+      button.disabled = true;
+      return;
+    }
+
+    const syncButton = () => {
+      const allExpanded = details.every((item) => item.open);
+      button.setAttribute('aria-expanded', String(allExpanded));
+      label.textContent = allExpanded ? '全部收合' : '全部展開';
+    };
+
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const shouldExpand = !details.every((item) => item.open);
+      details.forEach((item) => { item.open = shouldExpand; });
+      syncButton();
+    });
+    details.forEach((item) => item.addEventListener('toggle', syncButton));
+    syncButton();
+  });
 }
 
 function renderChartSection(metric, trend) {
@@ -377,6 +411,7 @@ async function openTrendOverlay() {
     window.app?.updateState?.('unit', unit);
     await openTrendOverlay();
   }));
+  bindBuildingAxisToggles();
   lucide?.createIcons?.(); drawCharts(trend);
 }
 function drawRoundedRect(ctx, x, y, width, height, radius) {
@@ -482,8 +517,9 @@ function drawCharts(trend) {
             ctx.fill();
             ctx.stroke();
             ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'right';
             lines.forEach((line, lineIndex) => {
-              ctx.fillText(line, left + width / 2, top + 10 + lineIndex * 14);
+              ctx.fillText(line, left + width - 7, top + 10 + lineIndex * 14);
             });
           });
         }
