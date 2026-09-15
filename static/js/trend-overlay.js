@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 
-const OVERLAY_VERSION = 'axis-buildings-dynamic-area-unit-v6';
+const OVERLAY_VERSION = 'axis-buildings-with-area-v7';
 const BASELINE_YEAR = 25;
 const BASELINE_LABEL = 'Y25';
 
@@ -191,16 +191,20 @@ function renderBuildingAxisDetails(data, metric) {
           return '<div class="px-1 text-center text-[10px] font-bold text-slate-400">現況基準</div>';
         }
         const count = row.buildings?.length || 0;
+        const annual = fmt(row.annual, metric);
         return `<details class="group min-w-0 text-center">
-          <summary class="mx-auto inline-flex max-w-full cursor-pointer list-none items-center justify-center gap-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-1.5 py-1 text-[10px] font-black text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600">
-            <span class="truncate">${count ? `新增 ${count} 棟` : '無新增'}</span>
-            ${count ? '<i data-lucide="chevron-down" class="h-3 w-3 shrink-0 transition-transform group-open:rotate-180"></i>' : ''}
+          <summary class="mx-auto inline-flex max-w-full cursor-pointer list-none flex-col items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-1.5 py-1 text-[10px] font-black text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600">
+            <span class="inline-flex max-w-full items-center gap-1"><span class="truncate">${count ? `新增 ${count} 棟` : '無新增'}</span>${count ? '<i data-lucide="chevron-down" class="h-3 w-3 shrink-0 transition-transform group-open:rotate-180"></i>' : ''}</span>
+            ${count ? `<span class="whitespace-nowrap font-mono text-blue-600 dark:text-blue-300">+${annual.val} ${annual.unit}</span>` : ''}
           </summary>
-          ${count ? `<div class="mt-1 rounded border border-blue-100 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/30 px-1 py-1.5 text-[10px] font-bold leading-4 text-blue-700 dark:text-blue-300">${row.buildings.map(escapeHtml).join('<br>')}</div>` : ''}
+          ${count ? `<div class="mt-1 divide-y divide-blue-100 overflow-hidden rounded border border-blue-100 dark:divide-blue-900/60 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/30 text-[10px] font-bold leading-4 text-blue-700 dark:text-blue-300">${(row.buildingDetails || []).map((item) => {
+            const area = fmt(item.area, metric);
+            return `<div class="px-1 py-1.5"><div class="break-words">${escapeHtml(item.name)}</div><div class="whitespace-nowrap font-mono">+${area.val} ${area.unit}</div></div>`;
+          }).join('')}</div>` : ''}
         </details>`;
       }).join('')}
     </div>
-    <p class="mt-2 text-center text-[10px] font-bold text-slate-400">新增廠棟位於對應年份正下方，點擊可展開；預設收合。</p>
+    <p class="mt-2 text-center text-[10px] font-bold text-slate-400">各年度顯示新增總面積；點擊可展開廠棟名稱與個別新增面積，預設收合。</p>
   </div>`;
 }
 
