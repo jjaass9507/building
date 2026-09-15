@@ -129,6 +129,13 @@ def _height_cm(value: Any, field: str) -> float:
         text = value.strip().replace("，", ",")
         if not text or text.casefold() in _HEIGHT_EMPTY_MARKERS:
             return 0.0
+
+        # 同一樓層可能記錄多個區域高度，例如「2.50；2.80」。
+        # 單一數值欄位採較低的淨高，避免匯出後高估樓層可用高度。
+        parts = [part.strip() for part in re.split(r"[;；/／~～]", text) if part.strip()]
+        if len(parts) > 1:
+            return min(_height_cm(part, field) for part in parts)
+
         match = _HEIGHT_VALUE_PATTERN.fullmatch(text)
         if not match:
             raise BuildingDataError(
