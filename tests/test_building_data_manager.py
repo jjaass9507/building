@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 
 from openpyxl import load_workbook
 
@@ -66,6 +67,17 @@ class BuildingDataManagerTests(unittest.TestCase):
         self.assertEqual(first[0]["_building_id"], second[0]["_building_id"])
         self.assertEqual(first[0]["樓層"][0]["_floor_id"], second[0]["樓層"][0]["_floor_id"])
         self.assertEqual(dataset_revision(first), dataset_revision(second))
+
+    def test_normalize_legacy_height_values_to_centimeters(self):
+        legacy_data = deepcopy(SAMPLE_DATA)
+        floor = legacy_data[0]["樓層"][0]
+        floor["樓層高度(cm)"] = "6.0 M"
+        floor["無塵室淨高(cm)"] = "3.5m"
+
+        normalized = normalize_dataset(legacy_data)
+
+        self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 600)
+        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 350)
 
     def test_change_summary_detects_floor_update(self):
         before = normalize_dataset(SAMPLE_DATA)
