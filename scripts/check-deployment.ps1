@@ -404,9 +404,9 @@ if ($pythonExe -and $wfastcgiPy) {
 
 # 8. 專案必要檔案 / 資料夾
 $requiredPaths = @(
-    'app.py', 'data_processor.py', 'requirements.txt',
+    'app.py', 'data_processor.py', 'building_data_manager.py', 'requirements.txt',
     'templates\index.html', 'templates\403.html',
-    'static\css\style.css', 'static\js\main.js'
+    'static\css\style.css', 'static\js\main.js', 'static\js\building-data-admin.js'
 )
 foreach ($rel in $requiredPaths) {
     $full = Join-Path $AppRoot $rel

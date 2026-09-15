@@ -18,6 +18,9 @@
 - **Windows AD 身份辨識**：透過 IIS Windows Integrated Authentication 取得 `REMOTE_USER`。
 - **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`。
 - **Admin 網頁上傳更新資料**：admin 可直接在頁面上傳樓層面積 Excel，系統自動清洗並更新 `data.json`。
+- **Admin 表格式資料維護**：管理人員可在接近原始 Excel 欄位順序的介面新增、修改、移動或刪除建物與樓層資料。
+- **雙格式 Excel 匯出**：提供可重新上傳的人員閱讀版，以及固定工作表、固定英文欄位的標準資料版。
+- **異動稽核與衝突防護**：每次平台維護必須填寫生效日期、異動類型與原因，並保留來源、維護人員、面積淨異動與修改摘要；多人同時編輯時阻止舊版本覆蓋新資料。
 - **資料版本留存**：每次更新前會先把上一版 `data.json` 備份到 `data_backups/`。
 - **IIS / FastCGI 部署支援**：已包含 `web.config` 設定範例。
 - **存取紀錄**：後端會記錄使用者帳號、IP、操作、上傳與權限拒絕紀錄至 `access_log.txt`。
@@ -53,11 +56,13 @@
 building/
 ├── app.py
 ├── data_processor.py          # Excel 清洗與 data.json 轉換邏輯
+├── building_data_manager.py   # 資料驗證、版本、稽核與雙格式 Excel 匯出
 ├── web.config
 ├── README.md
 ├── requirements.txt
 ├── permissions.json           # 角色權限設定檔
 ├── data.json                  # 執行時資料檔，需自行放置於專案根目錄
+├── data_changes.json          # 平台資料維護異動紀錄，不納入版控
 ├── access_log.txt             # 執行後自動產生的使用者存取紀錄
 ├── app.log                    # IIS / wfastcgi log，依 web.config 設定產生
 ├── secret_key.txt             # 登入 session 簽章金鑰，首次啟動自動產生，不納入版控
@@ -76,6 +81,7 @@ building/
     │   └── style.css
     └── js/
         ├── main.js
+        ├── building-data-admin.js # Admin 表格式資料維護介面
         ├── building-3d.js      # 單棟 3D 樓層模型與互動
         ├── data.js
         ├── utils.js
@@ -98,6 +104,8 @@ Flask 後端主程式，負責：
 - 提供首頁 `/`
 - 提供目前使用者 API `/api/me`
 - 提供資料 API `/api/data`
+- 提供雙格式 Excel 匯出 API `/api/export-data/<export_mode>`
+- 提供 admin 資料維護 API `/api/admin/building-data`
 - 提供 admin 上傳 API `/api/admin/upload-data`
 - 讀取根目錄下的 `data.json`
 - 讀取根目錄下的 `permissions.json`
@@ -121,6 +129,10 @@ Flask 後端主程式，負責：
 | `/logout` | GET | 匿名 | 登出並回到登入畫面 |
 | `/api/me` | GET | admin / user / viewer | 回傳目前使用者帳號與角色 |
 | `/api/data` | GET | admin / user / viewer | 讀取 `data.json` 並回傳 JSON |
+| `/api/export-data/readable` | GET | admin / user / viewer | 匯出接近原始 Input 的人員閱讀版 Excel，可重新上傳 |
+| `/api/export-data/standard` | GET | admin / user / viewer | 匯出固定資料表與英文欄位的標準資料版 Excel，可重新上傳 |
+| `/api/admin/building-data` | GET | admin | 讀取可維護資料、revision、筆數與最近異動紀錄 |
+| `/api/admin/building-data` | POST | admin | 驗證 revision 後儲存整批建物資料、備份舊版並寫入異動紀錄 |
 | `/api/admin/upload-data` | POST | admin | 上傳 Excel，清洗、備份舊版並更新 `data.json` |
 
 ---
@@ -172,6 +184,11 @@ Excel 清洗與 JSON 轉換模組，由 `/api/admin/upload-data` 呼叫。
 ```
 
 若母欄位與子系統加總不一致，系統仍會保留資料，並在上傳結果中回傳 warning。
+
+上傳時會自動辨識兩種格式：
+
+- 原始／人員閱讀版：第一張工作表第 2 列是既有中文欄位標題。
+- 標準資料版：包含 `building_master` 與 `floor_area_detail` 工作表，以穩定 ID 關聯建物及樓層。
 
 ---
 
@@ -358,6 +375,25 @@ POST /api/admin/upload-data
 ```text
 data_YYYYMMDD_HHMMSS_USERNAME.json
 ```
+
+### 平台資料維護
+
+Admin 可由頁面上方「資料維護」進入表格式編輯器：
+
+1. `樓層面積`：維護樓層、狀態、預計成廠年份、製程、各類面積、廠務子系統、樓高與荷重，也可移動樓層到其他棟別。
+2. `建物基本資料`：維護棟別、基地面積、容積率、建蔽率、開挖深度、耐震係數及停車位。
+3. `異動紀錄`：查看最近 30 次平台維護的人員、時間、原因與新增／刪除／修改摘要。
+
+儲存時前端會帶入載入資料時的 `revision`。若其他管理人員已先完成儲存，API 回傳 HTTP 409，使用者必須重新載入，避免直接覆蓋較新的資料。
+
+### Excel 匯出格式
+
+| 格式 | 主要工作表 | 用途 |
+|---|---|---|
+| 人員閱讀版 | `建物面積總表`、`年度新增明細`、`異動紀錄`、`資料說明` | 延續原始 Input 標題位置、欄位順序與棟別群組；第一張工作表可重新上傳 |
+| 標準資料版 | `metadata`、`building_master`、`floor_area_detail`、`change_log`、`data_dictionary` | 系統交換、資料分析與再次匯入；面積固定使用 m² |
+
+平台資料首次經由維護功能儲存後，會在建物與樓層資料中加入 `_building_id`、`_floor_id`。這兩個欄位是穩定識別碼，名稱修改時不會改變。
 
 ---
 
