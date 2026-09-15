@@ -184,7 +184,7 @@ function renderAreaUnitButton(unit, label) {
 function renderBuildingAxisDetails(data, metric) {
   if (metric.type !== 'area') return '';
   const columnCount = Math.max(data.rows.length, 1);
-  return `<div class="mt-1 border-t border-slate-100 dark:border-slate-800 pl-[58px] pr-5 pt-2">
+  return `<div id="trend-axis-details-${metric.key}" class="mt-1 border-t border-slate-100 dark:border-slate-800 pt-2">
     <div class="grid items-start gap-1" style="grid-template-columns: repeat(${columnCount}, minmax(0, 1fr));">
       ${data.rows.map((row, index) => {
         if (index === 0) {
@@ -410,6 +410,13 @@ function drawCharts(trend) {
 
     const valueLabelPlugin = {
       id: `trendLabels-${key}`,
+      afterLayout(chart) {
+        if (!isArea) return;
+        const axisDetails = document.getElementById(`trend-axis-details-${key}`);
+        if (!axisDetails) return;
+        axisDetails.style.paddingLeft = `${chart.chartArea.left}px`;
+        axisDetails.style.paddingRight = `${Math.max(0, chart.width - chart.chartArea.right)}px`;
+      },
       afterDatasetsDraw(chart) {
         const { ctx, chartArea } = chart;
         const totalElements = chart.getDatasetMeta(isArea ? 1 : 1).data;
