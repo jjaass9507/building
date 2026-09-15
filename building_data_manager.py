@@ -113,18 +113,26 @@ _HEIGHT_VALUE_PATTERN = re.compile(
     r"^([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(cm|公分|m|公尺|meter|meters)?$",
     re.IGNORECASE,
 )
+_HEIGHT_EMPTY_MARKERS = {
+    "-", "--", "—", "－", "n/a", "na", "none", "null", "無", "未設", "未提供", "未定", "待確認", "不適用", "tbd",
+}
 
 
 def _height_cm(value: Any, field: str) -> float:
     """將高度統一為 cm，並相容早期以 M／cm 字串保存的資料。"""
     if value in (None, ""):
         return 0.0
+    if isinstance(value, dict) and "value" in value:
+        value = value["value"]
 
     if isinstance(value, str):
-        match = _HEIGHT_VALUE_PATTERN.fullmatch(value.strip().replace("，", ","))
+        text = value.strip().replace("，", ",")
+        if not text or text.casefold() in _HEIGHT_EMPTY_MARKERS:
+            return 0.0
+        match = _HEIGHT_VALUE_PATTERN.fullmatch(text)
         if not match:
             raise BuildingDataError(
-                f"欄位「{field}」必須是數字（例如 350、350cm 或 3.5m）。"
+                f"欄位「{field}」必須是數字（例如 350、350cm 或 3.5m）；目前值為 {value!r}。"
             )
         number = _number(match.group(1).replace(",", ""), field)
         unit = (match.group(2) or "").lower()
@@ -228,7 +236,8 @@ def normalize_dataset(data: Any) -> List[Dict[str, Any]]:
             }
             for field in NUMERIC_FLOOR_FIELDS:
                 normalizer = _height_cm if field in {"樓層高度(cm)", "無塵室淨高(cm)"} else _number
-                floor[field] = normalizer(source_floor.get(field), field)
+                field_label = f"棟別「{building_name}」樓層「{floor_name}」的欄位「{field}」"
+                floor[field] = normalizer(source_floor.get(field), field_label)
 
             facility_value, facility_details = _facility_value(source_floor.get("廠務設施面積(M2)"))
             floor["廠務設施面積(M2)"] = {
