@@ -113,6 +113,10 @@ _HEIGHT_VALUE_PATTERN = re.compile(
     r"^([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(cm|公分|m|公尺|meter|meters)?$",
     re.IGNORECASE,
 )
+_HEIGHT_NUMBER_PATTERN = re.compile(
+    r"([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(cm|公分|m|公尺|meter|meters)?",
+    re.IGNORECASE,
+)
 _HEIGHT_EMPTY_MARKERS = {
     "-", "--", "—", "－", "n/a", "na", "none", "null", "無", "未設", "未提供", "未定", "待確認", "不適用", "tbd",
 }
@@ -138,8 +142,16 @@ def _height_cm(value: Any, field: str) -> float:
 
         match = _HEIGHT_VALUE_PATTERN.fullmatch(text)
         if not match:
+            # 允許「廠務機房：7.70停車空間：3.60」等區域標註格式。
+            # 擷取全部高度後採最低值，作為該樓層保守的可用淨高。
+            labelled_values = _HEIGHT_NUMBER_PATTERN.findall(text)
+            if labelled_values:
+                return min(
+                    _height_cm(f"{number}{unit or ''}", field)
+                    for number, unit in labelled_values
+                )
             raise BuildingDataError(
-                f"欄位「{field}」必須是數字（例如 350、350cm 或 3.5m）；目前值為 {value!r}。"
+                f"欄位「{field}」必須包含可辨識的高度數字；目前值為 {value!r}。"
             )
         number = _number(match.group(1).replace(",", ""), field)
         unit = (match.group(2) or "").lower()
