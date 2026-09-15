@@ -32,8 +32,8 @@ const FLOOR_FIELDS = [
     ['facility:消防', '消防(M²)', 'facilityDetail'],
     ['facility:監控', '監控(M²)', 'facilityDetail'],
     ['facility:其他', '監控/弱電/消防(M²)', 'facilityDetail'],
-    ['樓層高度(cm)', '樓層高度(cm)', 'number'],
-    ['無塵室淨高(cm)', '無塵室淨高(cm)', 'number'],
+    ['樓層高度(cm)', '樓層高度（原始內容）', 'text'],
+    ['無塵室淨高(cm)', '無塵室淨高（原始內容）', 'text'],
     ['樓層載重kgf/m2', '樓層載重(kgf/m²)', 'number']
 ];
 

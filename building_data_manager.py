@@ -12,7 +12,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 BUILDING_ID_KEY = "_building_id"
 FLOOR_ID_KEY = "_floor_id"
 
@@ -57,9 +57,8 @@ FLOOR_FIELDS = [
 READABLE_HEADERS = FLOOR_FIELDS + [field for field in BUILDING_FIELDS if field != "棟別"]
 
 NUMERIC_BUILDING_FIELDS = set(BUILDING_FIELDS[1:])
+HEIGHT_TEXT_FIELDS = {"樓層高度(cm)", "無塵室淨高(cm)"}
 NUMERIC_FLOOR_FIELDS = {
-    "樓層高度(cm)",
-    "無塵室淨高(cm)",
     "樓地板面積(M2)",
     "無塵室面積(M2)",
     "生產週邊(M2)",
@@ -194,7 +193,10 @@ def normalize_dataset(data: Any) -> List[Dict[str, Any]]:
                 "進駐製程": _text(source_floor.get("進駐製程")),
             }
             for field in NUMERIC_FLOOR_FIELDS:
-                floor[field] = _number(source_floor.get(field), field)
+                field_label = f"棟別「{building_name}」樓層「{floor_name}」的欄位「{field}」"
+                floor[field] = _number(source_floor.get(field), field_label)
+            for field in HEIGHT_TEXT_FIELDS:
+                floor[field] = _text(source_floor.get(field))
 
             facility_value, facility_details = _facility_value(source_floor.get("廠務設施面積(M2)"))
             floor["廠務設施面積(M2)"] = {
@@ -283,9 +285,9 @@ def _display_number(value: float) -> Any:
 
 def _original_floor_value(floor: Dict[str, Any], header: str) -> Any:
     if header == "樓層高度(M)":
-        return _display_number(_number(floor.get("樓層高度(cm)"), "樓層高度(cm)") / 100)
+        return floor.get("樓層高度(cm)", "")
     if header == "無塵室淨高(M)":
-        return _display_number(_number(floor.get("無塵室淨高(cm)"), "無塵室淨高(cm)") / 100)
+        return floor.get("無塵室淨高(cm)", "")
     if header == "廠務設施面積(M2)":
         return _display_number(_facility_value(floor.get(header))[0])
     if header in FACILITY_DETAIL_FIELDS:
@@ -408,7 +410,9 @@ def build_readable_workbook(
     flattened = _flatten_readable_rows(normalized)
     _style_title_sheet(sheet, "建物面積資訊", READABLE_HEADERS, len(flattened))
 
-    numeric_headers = set(READABLE_HEADERS) - {"棟別", "樓層", "狀態", "預計成廠年份", "進駐製程"}
+    numeric_headers = set(READABLE_HEADERS) - {
+        "棟別", "樓層", "狀態", "預計成廠年份", "進駐製程", "樓層高度(M)", "無塵室淨高(M)",
+    }
     current_row = 3
     for building_index, building in enumerate(normalized):
         floors = building.get("樓層") or [{"樓層": ""}]
@@ -552,6 +556,8 @@ def build_standard_workbook(
         ["building_master", "site_area_m2", "基地面積", "number", "m2"],
         ["floor_area_detail", "floor_id", "樓層穩定識別碼", "string", "required"],
         ["floor_area_detail", "building_id", "所屬建物識別碼", "string", "required"],
+        ["floor_area_detail", "floor_height_cm", "樓層高度原始內容", "string", "保留來源文字"],
+        ["floor_area_detail", "cleanroom_clear_height_cm", "無塵室淨高原始內容", "string", "保留來源文字"],
         ["floor_area_detail", "floor_area_m2", "樓地板面積", "number", "m2"],
         ["floor_area_detail", "expected_completion_year", "預計成廠年份", "string", "現況、Y1 或西元年"],
         ["floor_area_detail", "status", "資料狀態", "string", "已成廠／未成廠"],
