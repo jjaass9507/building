@@ -68,49 +68,16 @@ class BuildingDataManagerTests(unittest.TestCase):
         self.assertEqual(first[0]["樓層"][0]["_floor_id"], second[0]["樓層"][0]["_floor_id"])
         self.assertEqual(dataset_revision(first), dataset_revision(second))
 
-    def test_normalize_legacy_height_values_to_centimeters(self):
-        legacy_data = deepcopy(SAMPLE_DATA)
-        floor = legacy_data[0]["樓層"][0]
-        floor["樓層高度(cm)"] = "6.0 M"
-        floor["無塵室淨高(cm)"] = "3.5m"
-
-        normalized = normalize_dataset(legacy_data)
-
-        self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 600)
-        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 350)
-
-    def test_normalize_allows_empty_height_markers(self):
-        legacy_data = deepcopy(SAMPLE_DATA)
-        floor = legacy_data[0]["樓層"][0]
-        floor["樓層高度(cm)"] = "-"
-        floor["無塵室淨高(cm)"] = "N/A"
-
-        normalized = normalize_dataset(legacy_data)
-
-        self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 0)
-        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 0)
-
-    def test_normalize_uses_lower_value_for_multi_value_height(self):
-        legacy_data = deepcopy(SAMPLE_DATA)
-        legacy_data[0]["棟別"] = "K5"
-        floor = legacy_data[0]["樓層"][0]
-        floor["樓層"] = "3F"
+    def test_normalize_preserves_height_fields_as_text(self):
+        source_data = deepcopy(SAMPLE_DATA)
+        floor = source_data[0]["樓層"][0]
+        floor["樓層高度(cm)"] = "廠務機房：7.70停車空間：3.60"
         floor["無塵室淨高(cm)"] = "2.50；2.80"
 
-        normalized = normalize_dataset(legacy_data)
+        normalized = normalize_dataset(source_data)
 
-        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 250)
-
-    def test_normalize_extracts_labelled_multi_zone_floor_height(self):
-        legacy_data = deepcopy(SAMPLE_DATA)
-        legacy_data[0]["棟別"] = "K18"
-        floor = legacy_data[0]["樓層"][0]
-        floor["樓層"] = "B2F"
-        floor["樓層高度(cm)"] = "廠務機房：7.70停車空間：3.60"
-
-        normalized = normalize_dataset(legacy_data)
-
-        self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 360)
+        self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], "廠務機房：7.70停車空間：3.60")
+        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], "2.50；2.80")
 
     def test_change_summary_detects_floor_update(self):
         before = normalize_dataset(SAMPLE_DATA)
@@ -121,12 +88,17 @@ class BuildingDataManagerTests(unittest.TestCase):
         self.assertEqual(summary["buildings_updated"], 1)
 
     def test_readable_workbook_matches_upload_layout_and_round_trips(self):
-        workbook_stream = build_readable_workbook(SAMPLE_DATA, [], "tester")
+        source_data = deepcopy(SAMPLE_DATA)
+        source_data[0]["樓層"][0]["樓層高度(cm)"] = "廠務機房：7.70停車空間：3.60"
+        source_data[0]["樓層"][0]["無塵室淨高(cm)"] = "2.50；2.80"
+        workbook_stream = build_readable_workbook(source_data, [], "tester")
         workbook = load_workbook(workbook_stream)
         self.assertEqual(workbook.sheetnames, ["建物面積總表", "年度新增明細", "異動紀錄", "資料說明"])
         sheet = workbook["建物面積總表"]
         self.assertEqual(sheet["A2"].value, "棟別")
         self.assertEqual(sheet["B2"].value, "樓層")
+        self.assertEqual(sheet["F3"].value, "廠務機房：7.70停車空間：3.60")
+        self.assertEqual(sheet["G3"].value, "2.50；2.80")
         workbook.close()
 
         with tempfile.TemporaryDirectory() as folder:
@@ -142,13 +114,20 @@ class BuildingDataManagerTests(unittest.TestCase):
                 round_trip = json.load(handle)
             self.assertEqual(round_trip[0]["棟別"], "K18")
             self.assertEqual(round_trip[0]["樓層"][1]["樓地板面積(M2)"], 4000)
+            self.assertEqual(round_trip[0]["樓層"][0]["樓層高度(cm)"], "廠務機房：7.70停車空間：3.60")
+            self.assertEqual(round_trip[0]["樓層"][0]["無塵室淨高(cm)"], "2.50；2.80")
 
     def test_standard_workbook_has_fixed_schema_sheets(self):
-        workbook_stream = build_standard_workbook(SAMPLE_DATA, "tester")
+        source_data = deepcopy(SAMPLE_DATA)
+        source_data[0]["樓層"][0]["樓層高度(cm)"] = "廠務機房：7.70停車空間：3.60"
+        source_data[0]["樓層"][0]["無塵室淨高(cm)"] = "2.50；2.80"
+        workbook_stream = build_standard_workbook(source_data, "tester")
         workbook = load_workbook(workbook_stream, read_only=True)
         self.assertEqual(workbook.sheetnames, ["metadata", "building_master", "floor_area_detail", "change_log", "data_dictionary"])
         self.assertEqual(workbook["building_master"]["A1"].value, "building_id")
         self.assertEqual(workbook["floor_area_detail"]["J1"].value, "floor_area_m2")
+        self.assertEqual(workbook["floor_area_detail"]["H2"].value, "廠務機房：7.70停車空間：3.60")
+        self.assertEqual(workbook["floor_area_detail"]["I2"].value, "2.50；2.80")
         workbook.close()
 
         with tempfile.TemporaryDirectory() as folder:
@@ -163,6 +142,8 @@ class BuildingDataManagerTests(unittest.TestCase):
                 round_trip = json.load(handle)
             self.assertEqual(round_trip[0]["棟別"], "K18")
             self.assertEqual(round_trip[0]["樓層"][0]["樓地板面積(M2)"], 5000)
+            self.assertEqual(round_trip[0]["樓層"][0]["樓層高度(cm)"], "廠務機房：7.70停車空間：3.60")
+            self.assertEqual(round_trip[0]["樓層"][0]["無塵室淨高(cm)"], "2.50；2.80")
 
 
 if __name__ == "__main__":
