@@ -90,6 +90,17 @@ class BuildingDataManagerTests(unittest.TestCase):
         self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 0)
         self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 0)
 
+    def test_normalize_uses_lower_value_for_multi_value_height(self):
+        legacy_data = deepcopy(SAMPLE_DATA)
+        legacy_data[0]["棟別"] = "K5"
+        floor = legacy_data[0]["樓層"][0]
+        floor["樓層"] = "3F"
+        floor["無塵室淨高(cm)"] = "2.50；2.80"
+
+        normalized = normalize_dataset(legacy_data)
+
+        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 250)
+
     def test_change_summary_detects_floor_update(self):
         before = normalize_dataset(SAMPLE_DATA)
         after = normalize_dataset(SAMPLE_DATA)
