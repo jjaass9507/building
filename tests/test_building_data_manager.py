@@ -79,6 +79,17 @@ class BuildingDataManagerTests(unittest.TestCase):
         self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 600)
         self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 350)
 
+    def test_normalize_allows_empty_height_markers(self):
+        legacy_data = deepcopy(SAMPLE_DATA)
+        floor = legacy_data[0]["樓層"][0]
+        floor["樓層高度(cm)"] = "-"
+        floor["無塵室淨高(cm)"] = "N/A"
+
+        normalized = normalize_dataset(legacy_data)
+
+        self.assertEqual(normalized[0]["樓層"][0]["樓層高度(cm)"], 0)
+        self.assertEqual(normalized[0]["樓層"][0]["無塵室淨高(cm)"], 0)
+
     def test_change_summary_detects_floor_update(self):
         before = normalize_dataset(SAMPLE_DATA)
         after = normalize_dataset(SAMPLE_DATA)
