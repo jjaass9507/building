@@ -32,13 +32,13 @@ test('area axis renders one master toggle and marks every yearly detail', () => 
   assert.equal((html.match(/data-trend-axis-toggle=/g) || []).length, 1);
   assert.equal((html.match(/data-trend-axis-year/g) || []).length, 2);
   assert.ok(html.includes('全部展開'));
+  assert.ok(!html.includes('<details'));
+  assert.ok(!html.includes('<summary'));
+  assert.ok(!html.includes('chevron-down'));
 });
 
 test('master toggle expands and collapses all yearly details together', () => {
-  const details = [0, 1].map(() => ({
-    open: false,
-    addEventListener(type, handler) { this[type] = handler; }
-  }));
+  const details = [0, 1].map(() => ({ hidden: true }));
   const label = { textContent: '' };
   const attributes = new Map([['data-trend-axis-toggle', 'production_area']]);
   const button = {
@@ -56,10 +56,10 @@ test('master toggle expands and collapses all yearly details together', () => {
   run('bindBuildingAxisToggles()');
   assert.equal(label.textContent, '全部展開');
   button.click({ stopPropagation() {} });
-  assert.ok(details.every(item => item.open));
+  assert.ok(details.every(item => !item.hidden));
   assert.equal(label.textContent, '全部收合');
   button.click({ stopPropagation() {} });
-  assert.ok(details.every(item => !item.open));
+  assert.ok(details.every(item => item.hidden));
   assert.equal(label.textContent, '全部展開');
 });
 
