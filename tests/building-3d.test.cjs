@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 const utils = fs.readFileSync(path.join(root, 'static/js/utils.js'), 'utf8').replaceAll('export ', '');
 const source = fs.readFileSync(path.join(root, 'static/js/building-3d.js'), 'utf8')
     .replace("import { formatArea } from './utils.js';", utils).replaceAll('export ', '');
+const mainSource = fs.readFileSync(path.join(root, 'static/js/main.js'), 'utf8');
 const context = vm.createContext({});
 vm.runInContext(source, context);
 const run = code => vm.runInContext(code, context);
@@ -62,4 +63,22 @@ test('all floors remain in one continuous 3D building', () => {
     assert.equal((html.match(/data-floor-face=/g) || []).length, 24);
     assert.equal((html.match(/class="building-3d-face-info"/g) || []).length, 24);
     assert.ok(!html.includes('building-3d-floor-tags')); 
+});
+
+test('front view is the default and reset target', () => {
+    assert.match(mainSource, /building3DRotation:\s*0,\s*\n\s*building3DTilt:\s*90,/);
+    assert.match(mainSource, /building3DView:\s*'front'/);
+    assert.match(mainSource, /resetBuilding3DView:[\s\S]*?building3DView = 'front';[\s\S]*?building3DRotation = 0;[\s\S]*?building3DTilt = 90;/);
+});
+
+test('facade labels opt into measured text fitting without overflow', () => {
+    context.longLabelRows = [{
+        id:'long', building:'K18', floor:'B12F', floorWeight:1, area:4000, height:4.8,
+        floorLoad:1000, usageLabel:'非常長的製程用途名稱必須保持在邊框裡', status:'已成廠'
+    }];
+    const html = run(`renderBuilding3DModal({isBuilding3DOpen:true,building3DName:'K18',building3DMetric:'usage',building3DView:'front',building3DRotation:0,building3DTilt:90,building3DZoom:1,selected3DFloorId:null,unit:'m2'},{},longLabelRows)`);
+    assert.equal((html.match(/data-fit-text/g) || []).length, 2);
+    assert.ok(source.includes('fitTextToContainer'));
+    assert.ok(source.includes('scrollWidth <= availableWidth'));
+    assert.ok(source.includes('scrollHeight <= availableHeight'));
 });
