@@ -2,6 +2,7 @@ import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js?v=20260916-cleanroom-summary';
 import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-raft-bottom-no-roof-cap';
+import { destroyProcessAnalysisChart, drawProcessAnalysisChart, fetchProcessGroupConfig, openProcessGroupAdmin, renderProcessAnalysisModal } from './process-analysis.js?v=20260916-process-groups';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -18,6 +19,8 @@ const state = {
     isUploading: false,
     isTrendOpen: false,
     trendMetric: 'clean',
+    isProcessAnalysisOpen: false,
+    processGroupConfig: { schema_version: '1.0', groups: [] },
     isFilterCollapsed: true,
     isCompareTableOpen: false,
     compareMode: 'value',
@@ -78,6 +81,11 @@ const createTrendButton = () => `
         <i data-lucide="line-chart" class="w-3.5 h-3.5"></i> 成長趨勢
     </button>`;
 
+const createProcessAnalysisButton = () => `
+    <button onclick="window.app.openProcessAnalysis()" class="flex items-center gap-1 px-3 py-1 rounded text-base transition-all bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-sky-50 hover:text-sky-700 dark:hover:bg-slate-700 font-bold">
+        <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i> 製程無塵室
+    </button>`;
+
 const createExportButton = () => `
     <details data-export-menu="true" class="relative">
         <summary class="flex cursor-pointer list-none items-center gap-1 rounded border border-slate-200 bg-white px-3 py-1 text-base font-bold text-slate-600 transition-all hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
@@ -135,7 +143,7 @@ const injectHeaderButtons = (headerHtml) => {
     if (!nextHtml.includes('openTrendModal')) {
         nextHtml = nextHtml.replace(
             /(<\/div>\s*<\/div>\s*<div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"><\/div>)/,
-            `${createCompareTableButton()}${createTrendButton()}${createExportButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
+            `${createCompareTableButton()}${createTrendButton()}${createProcessAnalysisButton()}${createExportButton()}</div></div><div class="hidden xl:block w-px h-8 bg-slate-200 dark:bg-slate-700 shrink-0"></div>`
         );
     }
 
@@ -508,6 +516,7 @@ const renderAdminUploadPanel = () => {
                 <div class="flex flex-col gap-2 xl:items-end">
                     <div class="flex flex-wrap gap-2">
                         <button type="button" onclick="window.buildingDataAdmin?.open()" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-black text-white hover:bg-slate-700 dark:bg-blue-600 dark:hover:bg-blue-500"><i data-lucide="table-properties" class="mr-1 inline h-4 w-4"></i>資料維護</button>
+                        <button type="button" onclick="window.app.openProcessGroupAdmin()" class="rounded-lg border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-black text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"><i data-lucide="network" class="mr-1 inline h-4 w-4"></i>製程大群組</button>
                         <button type="button" onclick="window.buildingDataAdmin?.export('readable')" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">人員閱讀版 Excel</button>
                         <button type="button" onclick="window.buildingDataAdmin?.export('standard')" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">標準資料版 Excel</button>
                     </div>
@@ -530,6 +539,15 @@ const loadData = async () => {
     appData.processed = result.processedData;
     appData.meta = result.buildingMeta;
     appData.sortedFloors = result.sortedFloorLabels;
+};
+
+const loadProcessGroupData = async () => {
+    try {
+        state.processGroupConfig = await fetchProcessGroupConfig();
+    } catch (error) {
+        console.warn('製程大群組設定載入失敗，暫以未分群顯示。', error);
+        state.processGroupConfig = { schema_version: '1.0', groups: [] };
+    }
 };
 
 const render = () => {
@@ -559,6 +577,7 @@ const render = () => {
 
     const allNames = Object.keys(appData.meta);
     const activeBuildings = state.filterBuildings.length > 0 ? state.filterBuildings : allNames;
+    const processAnalysisBuildings = state.filterBuildings.length > 0 ? activeBuildings : null;
 
     const presentFloors = new Set();
     activeBuildings.forEach(bldg => {
@@ -596,11 +615,13 @@ const render = () => {
         </main>
         ${renderPanel(state, appData.meta, appData.processed)}
         ${renderTrendModal()}
+        ${renderProcessAnalysisModal(state, appData.processed, state.processGroupConfig, processAnalysisBuildings)}
         ${renderBuilding3DModal(state, appData.meta, appData.processed)}
     `;
 
     lucide.createIcons();
     setTimeout(drawTrendChart, 0);
+    setTimeout(() => drawProcessAnalysisChart(state, appData.processed, state.processGroupConfig, processAnalysisBuildings), 0);
     setTimeout(() => {
         bindBuilding3DInteractions(state);
         const layout = document.querySelector('.building-3d-layout');
@@ -656,6 +677,23 @@ window.app = {
         destroyTrendCharts();
         render();
     },
+    openProcessAnalysis: () => {
+        state.isProcessAnalysisOpen = true;
+        render();
+    },
+    closeProcessAnalysis: () => {
+        state.isProcessAnalysisOpen = false;
+        destroyProcessAnalysisChart();
+        render();
+    },
+    openProcessGroupAdmin: () => openProcessGroupAdmin({
+        rows: appData.processed,
+        config: state.processGroupConfig,
+        onSaved: async config => {
+            state.processGroupConfig = config;
+            render();
+        }
+    }),
     selectZone: (id) => {
         state.selectedZone = appData.processed.find(d => d.id === id);
         state.selectedBuilding = null;
@@ -778,6 +816,10 @@ window.app = {
 };
 
 document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && state.isProcessAnalysisOpen) {
+        window.app.closeProcessAnalysis();
+        return;
+    }
     if (event.key === 'Escape' && state.isBuilding3DOpen) {
         window.app.closeBuilding3D();
     }
@@ -785,7 +827,7 @@ document.addEventListener('keydown', event => {
 
 window.addEventListener('building-data-saved', async () => {
     try {
-        await loadData();
+        await Promise.all([loadData(), loadProcessGroupData()]);
         state.selectedZone = null;
         state.selectedBuilding = null;
         render();
@@ -809,7 +851,7 @@ const init = async () => {
             }
         }
 
-        await loadData();
+        await Promise.all([loadData(), loadProcessGroupData()]);
 
         if (window.innerWidth < 768) {
             const allBuildings = Object.keys(appData.meta);
