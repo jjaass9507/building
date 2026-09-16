@@ -64,6 +64,7 @@ test('all floors remain in one continuous 3D building', () => {
     assert.equal((html.match(/data-floor-face=/g) || []).length, 24);
     assert.equal((html.match(/class="building-3d-face-info"/g) || []).length, 24);
     assert.ok(!html.includes('building-3d-floor-tags')); 
+    assert.ok(!html.includes('building-3d-roof-cap'));
 });
 
 test('front view is the default and reset target', () => {
@@ -88,4 +89,15 @@ test('auto fit can enlarge the whole building beyond the old fixed cap', () => {
     assert.equal(run('getContainScale({width:400,height:200,availableWidth:1200,availableHeight:800})'), 3);
     assert.ok(!source.includes('Math.min(1.08'));
     assert.match(cssSource, /scale3d\(var\(--building-zoom\),var\(--building-zoom\),var\(--building-zoom\)\)/);
+});
+
+test('raft foundation is always rendered as the bottom floor', () => {
+    context.floorOrderRows = [
+        { floor:'1F', floorWeight:1 },
+        { floor:'筏基層', floorWeight:999 },
+        { floor:'B2F', floorWeight:-2 }
+    ];
+    assert.equal(run('floorOrderRows.sort(compare3DFloors).map(item => item.floor).join(",")'), '筏基層,B2F,1F');
+    assert.ok(!source.includes('building-3d-roof-cap'));
+    assert.ok(!cssSource.includes('.building-3d-roof-cap'));
 });
