@@ -204,6 +204,11 @@ const fitTextToContainer = (element) => {
     element.style.fontSize = `${Math.floor(best * 4) / 4}px`;
 };
 
+const getContainScale = ({ width, height, availableWidth, availableHeight }) => Math.max(.035, Math.min(
+    availableWidth / Math.max(1, width),
+    availableHeight / Math.max(1, height)
+));
+
 export const bindBuilding3DInteractions = (state) => {
     disposeScene();
     disposeScene = () => {};
@@ -248,8 +253,9 @@ export const bindBuilding3DInteractions = (state) => {
         const height = Math.max(...faces.map(b => b.bottom)) - Math.min(...faces.map(b => b.top));
         const availableWidth = Math.max(160, scene.clientWidth - 100);
         const availableHeight = Math.max(120, scene.clientHeight - 80);
-        const fit = Math.min(1.08, availableWidth / Math.max(1, width), availableHeight / Math.max(1, height));
-        stage.style.setProperty('--building-zoom', String(Math.max(.035, fit) * Number(state.building3DZoom ?? 1)));
+        const fit = getContainScale({ width, height, availableWidth, availableHeight });
+        const zoom = fit * Number(state.building3DZoom ?? 1);
+        stage.style.setProperty('--building-zoom', String(zoom));
         requestAnimationFrame(() => {
             if (!scene.isConnected) return;
             const scaled = modelBounds();
