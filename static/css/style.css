@@ -110,7 +110,8 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 }
 .building-3d-stage {
     position:absolute; left:50%; top:52%; width:1px; height:1px; transform-style:preserve-3d;
-    transform:rotateX(var(--building-tilt)) rotateZ(var(--building-angle)) scale(var(--building-zoom)); transition:none;
+    transform:rotateX(var(--building-tilt)) rotateZ(var(--building-angle)) scale3d(var(--building-zoom),var(--building-zoom),var(--building-zoom));
+    transform-origin:50% 50%; transition:none;
 }
 .building-3d-floor {
     position:absolute; left:0; top:0; width:var(--floor-width); height:var(--floor-depth);
