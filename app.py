@@ -651,7 +651,6 @@ def load_utility_trends():
     with open(utility_trends_file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-
 def create_default_process_groups():
     return {
         "schema_version": "1.0",
