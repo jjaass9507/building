@@ -9,6 +9,7 @@ const utils = fs.readFileSync(path.join(root, 'static/js/utils.js'), 'utf8').rep
 const source = fs.readFileSync(path.join(root, 'static/js/building-3d.js'), 'utf8')
     .replace("import { formatArea } from './utils.js';", utils).replaceAll('export ', '');
 const mainSource = fs.readFileSync(path.join(root, 'static/js/main.js'), 'utf8');
+const cssSource = fs.readFileSync(path.join(root, 'static/css/style.css'), 'utf8');
 const context = vm.createContext({});
 vm.runInContext(source, context);
 const run = code => vm.runInContext(code, context);
@@ -81,4 +82,10 @@ test('facade labels opt into measured text fitting without overflow', () => {
     assert.ok(source.includes('fitTextToContainer'));
     assert.ok(source.includes('scrollWidth <= availableWidth'));
     assert.ok(source.includes('scrollHeight <= availableHeight'));
+});
+
+test('auto fit can enlarge the whole building beyond the old fixed cap', () => {
+    assert.equal(run('getContainScale({width:400,height:200,availableWidth:1200,availableHeight:800})'), 3);
+    assert.ok(!source.includes('Math.min(1.08'));
+    assert.match(cssSource, /scale3d\(var\(--building-zoom\),var\(--building-zoom\),var\(--building-zoom\)\)/);
 });
