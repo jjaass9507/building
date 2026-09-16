@@ -42,7 +42,6 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 .dark header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(2) > span:first-child {
     color:rgb(252,211,77); background:rgba(120,53,15,.7); border-color:rgba(245,158,11,.5);
 }
-
 /* 單棟 3D 示意圖：方案 C / 完整量體與圖上樓層標註 */
 .building-3d-dialog {
     --viewer-accent:#0f8c88; --viewer-accent-soft:#e3f4f1; --viewer-planned:#df8739;
@@ -210,14 +209,17 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
     align-items:center; gap:7px; overflow:hidden; border:1px solid rgba(255,255,255,.72);
     border-left:3px solid #566361; border-radius:2px; background:rgba(255,253,250,.92);
     box-shadow:0 2px 7px rgba(31,43,40,.18); color:#344044; pointer-events:none;
+    contain:layout paint; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+    text-rendering:geometricPrecision; font-synthesis:none;
 }
 .building-3d-face-info strong {
-    display:inline-flex; align-self:stretch; min-width:38px; align-items:center; justify-content:center;
+    display:inline-flex; align-self:stretch; flex:0 0 clamp(30px,24%,72px); min-width:0;
+    align-items:center; justify-content:center; overflow:hidden; padding:0 4px;
     background:#525f5d; color:#fff; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    font-size:10px; font-weight:900; letter-spacing:.02em;
+    font-size:10px; font-weight:900; letter-spacing:0; line-height:1; white-space:nowrap;
 }
 .building-3d-face-info > span {
-    min-width:0; overflow:hidden; padding-right:6px; font-size:10px; font-weight:800;
+    flex:1 1 auto; min-width:0; overflow:hidden; padding-right:6px; font-size:10px; font-weight:800;
     line-height:1; text-overflow:ellipsis; white-space:nowrap;
 }
 .building-3d-floor.is-selected .building-3d-face-info {
@@ -292,8 +294,7 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
     .building-3d-scene { min-width:0; min-height:500px; }
     .building-3d-stage { left:50%; }
     .building-3d-face-info { left:5px; right:5px; gap:4px; }
-    .building-3d-face-info strong { min-width:30px; font-size:9px; }
-    .building-3d-face-info > span { font-size:9px; }
+    .building-3d-face-info strong { flex-basis:clamp(28px,24%,58px); }
     .building-3d-overlay-detail { width:min(235px,62vw); padding:9px; }
     .building-3d-overlay-detail .building-3d-detail-facts { display:none; }
     .building-3d-detail-heading { display:block; }
@@ -303,4 +304,3 @@ header div[class*="gap-x-4"][class*="gap-y-2"][class*="w-full"] > div:nth-child(
 @media (prefers-reduced-motion:reduce) {
     .building-3d-tool,.building-3d-metric-toolbar button,.building-3d-top,.building-3d-front,.building-3d-side { transition:none; }
 }
-
