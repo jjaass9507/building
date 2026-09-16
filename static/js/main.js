@@ -1,8 +1,8 @@
 import { processRawData } from './data.js';
-import { formatArea, apiUrl } from './utils.js';
+import { formatArea, apiUrl, filterRowsByScope } from './utils.js?v=20260916-unified-scope';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js?v=20260916-cleanroom-summary';
 import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-raft-bottom-no-roof-cap';
-import { destroyProcessAnalysisChart, drawProcessAnalysisChart, fetchProcessGroupConfig, openProcessGroupAdmin, renderProcessAnalysisModal } from './process-analysis.js?v=20260916-process-groups';
+import { destroyProcessAnalysisChart, drawProcessAnalysisChart, fetchProcessGroupConfig, openProcessGroupAdmin, renderProcessAnalysisModal } from './process-analysis.js?v=20260916-unified-scope';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -557,9 +557,13 @@ const render = () => {
     const savedScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
     const app = document.getElementById('app');
 
-    const dataForTotal = state.includeUnfinished
-        ? appData.processed
-        : appData.processed.filter(d => d.status !== '未成廠' || isHiddenMatrixFloor(d.floor));
+    const allNames = Object.keys(appData.meta);
+    const activeBuildings = state.filterBuildings.length > 0 ? state.filterBuildings : allNames;
+    const processAnalysisBuildings = state.filterBuildings.length > 0 ? activeBuildings : null;
+    const calculationRows = filterRowsByScope(appData.processed, {
+        includeUnfinished: state.includeUnfinished,
+        buildings: processAnalysisBuildings
+    });
 
     // 其他模組 (基地面積共用設定等) 需要知道目前的單位與未成廠開關。
     // 以前是去 header 反推，會誤判 (標題列本來就有「坪」按鈕)，改成直接公開狀態。
@@ -568,16 +572,12 @@ const render = () => {
         includeUnfinished: state.includeUnfinished
     };
 
-    const totalArea = dataForTotal.reduce((acc, curr) => acc + (curr.area || 0), 0);
-    const totalClean = dataForTotal.reduce((acc, curr) => acc + (curr.cleanRoomArea || 0), 0);
+    const totalArea = calculationRows.reduce((acc, curr) => acc + (curr.area || 0), 0);
+    const totalClean = calculationRows.reduce((acc, curr) => acc + (curr.cleanRoomArea || 0), 0);
     const totals = {
         area: formatArea(totalArea, state.unit),
         cleanRoom: formatArea(totalClean, state.unit)
     };
-
-    const allNames = Object.keys(appData.meta);
-    const activeBuildings = state.filterBuildings.length > 0 ? state.filterBuildings : allNames;
-    const processAnalysisBuildings = state.filterBuildings.length > 0 ? activeBuildings : null;
 
     const presentFloors = new Set();
     activeBuildings.forEach(bldg => {
@@ -611,9 +611,9 @@ const render = () => {
             ${state.isCompareTableOpen
                 // 比較表要看到完整規劃，未成廠也要列入，不受標題列「包含未成廠」開關影響。
                 ? renderCompareTable(state, activeBuildings, appData.processed, appData.meta, appData.sortedFloors)
-                : renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta)}
+                : renderMatrix(state, activeBuildings, activeFloors, matrixData, dataMap, appData.meta, calculationRows)}
         </main>
-        ${renderPanel(state, appData.meta, appData.processed)}
+        ${renderPanel(state, appData.meta, calculationRows)}
         ${renderTrendModal()}
         ${renderProcessAnalysisModal(state, appData.processed, state.processGroupConfig, processAnalysisBuildings)}
         ${renderBuilding3DModal(state, appData.meta, appData.processed)}
