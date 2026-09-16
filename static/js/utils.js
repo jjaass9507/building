@@ -45,6 +45,20 @@ export const formatPct = (value) => {
     return (value * 100).toFixed(0);
 };
 
+// 統一所有面積彙總的資料範圍：目前選取廠棟 + 未成廠開關。
+export const filterRowsByScope = (rows, options = {}) => {
+    const includeUnfinished = Boolean(options.includeUnfinished);
+    const buildings = Array.isArray(options.buildings) && options.buildings.length
+        ? new Set(options.buildings)
+        : null;
+
+    return (Array.isArray(rows) ? rows : []).filter(row => {
+        if (buildings && !buildings.has(row.building)) return false;
+        if (!includeUnfinished && row.status === '未成廠') return false;
+        return true;
+    });
+};
+
 // 取得共用樣式
 export const getCellStyle = () => {
     return 'bg-white text-slate-700 border-slate-200 hover:border-blue-500 hover:shadow-md hover:text-blue-600';
