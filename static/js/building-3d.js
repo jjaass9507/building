@@ -6,7 +6,6 @@ const getValue = (value) => {
     }
     return Number(value || 0) || 0;
 };
-
 const escapeHtml = (value) => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -89,8 +88,8 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                     <span class="building-3d-front" data-floor-face="${escapeHtml(floor.id)}">
                         <span class="building-3d-window-band"></span>
                         <span class="building-3d-face-info">
-                            <strong>${escapeHtml(floor.floor)}</strong>
-                            <span>${metricValue(floor, metric, state.unit)}</span>
+                            <strong data-fit-text data-fit-min="5" data-fit-max="15">${escapeHtml(floor.floor)}</strong>
+                            <span data-fit-text data-fit-min="5" data-fit-max="15">${metricValue(floor, metric, state.unit)}</span>
                         </span>
                     </span>
                     <span class="building-3d-side"><span class="building-3d-window-band"></span></span>
@@ -161,7 +160,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                                     <div class="building-3d-view-note">完整建築量體<small>點選樓層或標籤查看資料</small></div>
                                     ${selectedDetail}
                                     <div class="building-3d-ground"></div>
-                                    <div class="building-3d-stage" data-building-3d-stage style="--building-angle:${Number(state.building3DRotation ?? -38)}deg;--building-tilt:${Number(state.building3DTilt ?? 58)}deg;--building-zoom:${Number(state.building3DZoom ?? 1)}">
+                                    <div class="building-3d-stage" data-building-3d-stage data-building-3d-view="${state.building3DView === 'overview' ? 'overview' : 'front'}" style="--building-angle:${Number(state.building3DRotation ?? 0)}deg;--building-tilt:${Number(state.building3DTilt ?? 90)}deg;--building-zoom:${Number(state.building3DZoom ?? 1)}">
                                         <div class="building-3d-core" style="--core-span:${coreSpan}px;--core-bottom:${coreBottom}px" aria-hidden="true">
                                             <span class="building-3d-core-top"></span>
                                             <span class="building-3d-core-front"></span>
@@ -181,6 +180,30 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
 };
 
 let disposeScene = () => {};
+const fitTextToContainer = (element) => {
+    if (!element?.isConnected) return;
+    const min = Number(element.dataset.fitMin || 5);
+    const max = Number(element.dataset.fitMax || 15);
+    const availableWidth = element.clientWidth;
+    const availableHeight = element.clientHeight;
+    if (!(availableWidth > 0 && availableHeight > 0)) return;
+
+    let low = min;
+    let high = max;
+    let best = min;
+    for (let step = 0; step < 8; step += 1) {
+        const size = (low + high) / 2;
+        element.style.fontSize = `${size}px`;
+        if (element.scrollWidth <= availableWidth + 0.5 && element.scrollHeight <= availableHeight + 0.5) {
+            best = size;
+            low = size;
+        } else {
+            high = size;
+        }
+    }
+    element.style.fontSize = `${Math.floor(best * 4) / 4}px`;
+};
+
 export const bindBuilding3DInteractions = (state) => {
     disposeScene();
     disposeScene = () => {};
@@ -189,6 +212,11 @@ export const bindBuilding3DInteractions = (state) => {
     const stage = document.querySelector('[data-building-3d-stage]');
     if (!scene || !stage || scene.dataset.bound === 'true') return;
     scene.dataset.bound = 'true';
+
+    const fitFaceText = () => {
+        if (!scene.isConnected) return;
+        stage.querySelectorAll('[data-fit-text]').forEach(fitTextToContainer);
+    };
 
     const updateSelectedDetail = () => {
         if (!scene.isConnected) return;
@@ -208,6 +236,7 @@ export const bindBuilding3DInteractions = (state) => {
     };
     const fitView = () => {
         if (!scene.isConnected) return;
+        fitFaceText();
         stage.style.left = '50%';
         stage.style.top = '52%';
         stage.style.setProperty('--building-zoom', '1');
@@ -233,10 +262,14 @@ export const bindBuilding3DInteractions = (state) => {
             const shiftY = sceneBounds.top + scene.clientHeight / 2 - (top + bottom) / 2;
             stage.style.left = `${scene.clientWidth / 2 + shiftX}px`;
             stage.style.top = `${scene.clientHeight * .52 + shiftY}px`;
-            requestAnimationFrame(updateSelectedDetail);
+            requestAnimationFrame(() => {
+                fitFaceText();
+                updateSelectedDetail();
+            });
         });
     };
     requestAnimationFrame(fitView);
+    document.fonts?.ready.then(() => requestAnimationFrame(fitFaceText));
     const observer = new ResizeObserver(() => {
         if (!scene.isConnected) observer.disconnect();
         else fitView();
@@ -247,8 +280,8 @@ export const bindBuilding3DInteractions = (state) => {
     let dragging = false;
     let startX = 0;
     let startY = 0;
-    let startAngle = Number(state.building3DRotation ?? -38);
-    let startTilt = Number(state.building3DTilt ?? 58);
+    let startAngle = Number(state.building3DRotation ?? 0);
+    let startTilt = Number(state.building3DTilt ?? 90);
 
     const applyView = () => {
         stage.style.setProperty('--building-angle', `${state.building3DRotation}deg`);
@@ -261,8 +294,8 @@ export const bindBuilding3DInteractions = (state) => {
         dragging = true;
         startX = event.clientX;
         startY = event.clientY;
-        startAngle = Number(state.building3DRotation ?? -38);
-        startTilt = Number(state.building3DTilt ?? 58);
+        startAngle = Number(state.building3DRotation ?? 0);
+        startTilt = Number(state.building3DTilt ?? 90);
         scene.classList.add('is-dragging');
         scene.setPointerCapture?.(event.pointerId);
     });
@@ -292,4 +325,3 @@ export const bindBuilding3DInteractions = (state) => {
         applyView();
     }, { passive: false });
 };
-
