@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260915-face-aligned';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-front-fluid-type';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -25,10 +25,10 @@ const state = {
     isBuilding3DOpen: false,
     building3DName: null,
     selected3DFloorId: null,
-    building3DRotation: -38,
-    building3DTilt: 58,
+    building3DRotation: 0,
+    building3DTilt: 90,
     building3DZoom: 1,
-    building3DView: 'overview',
+    building3DView: 'front',
     building3DMetric: 'usage'
 };
 
@@ -678,10 +678,10 @@ window.app = {
         state.isBuilding3DOpen = true;
         state.building3DName = buildingName;
         state.selected3DFloorId = null;
-        state.building3DRotation = -38;
-        state.building3DTilt = 58;
+        state.building3DRotation = 0;
+        state.building3DTilt = 90;
         state.building3DZoom = 1;
-        state.building3DView = 'overview';
+        state.building3DView = 'front';
         state.building3DMetric = 'usage';
         render();
     },
@@ -706,9 +706,9 @@ window.app = {
         render();
     },
     resetBuilding3DView: () => {
-        state.building3DView = 'overview';
-        state.building3DRotation = -38;
-        state.building3DTilt = 58;
+        state.building3DView = 'front';
+        state.building3DRotation = 0;
+        state.building3DTilt = 90;
         state.building3DZoom = 1;
         render();
     },
