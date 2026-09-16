@@ -39,11 +39,13 @@ template_path = os.path.join(base_dir, 'templates')
 static_path = os.path.join(base_dir, 'static')
 data_file_path = os.path.join(base_dir, 'data.json')
 utility_trends_file_path = os.path.join(base_dir, 'utility_trends.json')
+process_groups_file_path = os.path.join(base_dir, 'process_groups.json')
 permission_file_path = os.path.join(base_dir, 'permissions.json')
 log_file_path = os.path.join(base_dir, 'access_log.txt')
 upload_dir = os.path.join(base_dir, 'uploads')
 backup_dir = os.path.join(base_dir, 'data_backups')
 utility_backup_dir = os.path.join(base_dir, 'utility_trend_backups')
+process_group_backup_dir = os.path.join(base_dir, 'process_group_backups')
 processed_dir = os.path.join(base_dir, 'processed')
 cleaned_excel_path = os.path.join(processed_dir, '樓層面積資訊_系統匯入檔.xlsx')
 data_changes_file_path = os.path.join(base_dir, 'data_changes.json')
@@ -562,7 +564,7 @@ def require_roles(*allowed_roles):
 # --- 5. 資料上傳與版本留存 ---
 
 def ensure_runtime_dirs():
-    for folder in [upload_dir, backup_dir, utility_backup_dir, processed_dir]:
+    for folder in [upload_dir, backup_dir, utility_backup_dir, process_group_backup_dir, processed_dir]:
         os.makedirs(folder, exist_ok=True)
 
 def is_allowed_upload(filename):
@@ -648,6 +650,90 @@ def load_utility_trends():
 
     with open(utility_trends_file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def create_default_process_groups():
+    return {
+        "schema_version": "1.0",
+        "updated_at": None,
+        "updated_by": None,
+        "groups": []
+    }
+
+
+def validate_process_groups(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("製程大群組設定必須是 JSON object。")
+    groups = payload.get("groups", [])
+    if not isinstance(groups, list):
+        raise ValueError("groups 必須是陣列。")
+    if len(groups) > 100:
+        raise ValueError("製程大群組最多 100 組。")
+
+    normalized = []
+    group_names = set()
+    group_ids = set()
+    process_owners = {}
+    reserved_processes = {"混合", "未分類", "未分群", "非製程"}
+    reserved_group_names = {"混合", "未分類", "未分群"}
+    for index, raw_group in enumerate(groups):
+        if not isinstance(raw_group, dict):
+            raise ValueError(f"第 {index + 1} 個大群組格式不正確。")
+        name = str(raw_group.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"第 {index + 1} 個大群組必須填寫名稱。")
+        if len(name) > 80:
+            raise ValueError(f"大群組「{name[:20]}」名稱不可超過 80 字。")
+        if name in group_names:
+            raise ValueError(f"大群組名稱「{name}」重複。")
+        if name in reserved_group_names:
+            raise ValueError(f"「{name}」是系統分類，不能作為大群組名稱。")
+        group_names.add(name)
+
+        processes = raw_group.get("processes", [])
+        if not isinstance(processes, list):
+            raise ValueError(f"大群組「{name}」的 processes 必須是陣列。")
+        clean_processes = []
+        for raw_process in processes:
+            process = str(raw_process or "").strip()
+            if not process or process in clean_processes:
+                continue
+            if len(process) > 200:
+                raise ValueError(f"製程名稱「{process[:20]}」不可超過 200 字。")
+            if process in reserved_processes:
+                raise ValueError(f"「{process}」是系統分類，不能指定至大群組。")
+            if process in process_owners:
+                raise ValueError(f"製程「{process}」已屬於「{process_owners[process]}」，不可重複分群。")
+            process_owners[process] = name
+            clean_processes.append(process)
+
+        group_id = str(raw_group.get("id") or f"group-{secrets.token_hex(6)}").strip()[:120]
+        if group_id in group_ids:
+            raise ValueError(f"大群組 ID「{group_id}」重複。")
+        group_ids.add(group_id)
+        normalized.append({"id": group_id, "name": name, "processes": clean_processes})
+
+    return {
+        "schema_version": "1.0",
+        "updated_at": payload.get("updated_at"),
+        "updated_by": payload.get("updated_by"),
+        "groups": normalized
+    }
+
+
+def load_process_groups():
+    if not os.path.exists(process_groups_file_path):
+        return create_default_process_groups()
+    with open(process_groups_file_path, 'r', encoding='utf-8') as handle:
+        return validate_process_groups(json.load(handle))
+
+
+def write_process_groups(data):
+    ensure_runtime_dirs()
+    temp_path = os.path.join(processed_dir, f"process_groups_pending_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json")
+    with open(temp_path, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+    os.replace(temp_path, process_groups_file_path)
 
 def validate_utility_trends(payload):
     if not isinstance(payload, dict):
@@ -838,6 +924,48 @@ def get_data():
         return jsonify(load_current_data())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/process-groups')
+@require_roles("admin", "user", "viewer")
+def get_process_groups():
+    try:
+        return jsonify({"success": True, "data": load_process_groups()})
+    except (ValueError, OSError, json.JSONDecodeError) as e:
+        return jsonify({"error": "load_failed", "message": str(e)}), 500
+
+
+@app.route('/api/admin/process-groups', methods=['POST'])
+@require_roles("admin")
+def save_process_groups():
+    username = get_current_user()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_json", "message": "請提供 JSON 格式資料。"}), 400
+
+    try:
+        data = validate_process_groups(payload)
+        data["updated_at"] = datetime.now().isoformat(timespec='seconds')
+        data["updated_by"] = username
+        ensure_runtime_dirs()
+        backup_path = None
+        if os.path.exists(process_groups_file_path):
+            backup_name = f"process_groups_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{safe_username(username)}.json"
+            backup_path = os.path.join(process_group_backup_dir, backup_name)
+            shutil.copy2(process_groups_file_path, backup_path)
+        write_process_groups(data)
+        log_user_access(username, action='Update Process Groups', extra=f"Groups: {len(data['groups'])} | Backup: {backup_path or 'none'}")
+        return jsonify({
+            "success": True,
+            "message": "製程大群組設定已更新。",
+            "backup_file": os.path.basename(backup_path) if backup_path else None,
+            "data": data
+        })
+    except ValueError as e:
+        return jsonify({"error": "validation_failed", "message": str(e)}), 400
+    except Exception as e:
+        logging.exception("Unexpected process group update error")
+        return jsonify({"error": "save_failed", "message": str(e)}), 500
 
 
 @app.route('/api/export-data/<export_mode>')
