@@ -309,7 +309,7 @@ export const renderHeader = (state, allBuildingNames, totals, processedData) => 
 };
 
 // 3. 渲染矩陣 (修正：統一屬性名稱 value, 解決 NaN 問題)
-export const renderMatrix = (state, activeBuildings, activeFloors, processedData, dataMap, buildingMeta) => {
+export const renderMatrix = (state, activeBuildings, activeFloors, processedData, dataMap, buildingMeta, calculationData = processedData) => {
     const { ROW_HEIGHT, HEADER_HEIGHT, FONT_SIZE_FLOOR, COLORS, HEADER_INFO_LABEL, HEADER_INFO_VAL, HEADER_INFO_TAG, BAR_DESC_LABEL } = STYLE_CONFIG;
     const sortedActive = sortBuildings(activeBuildings);
 
@@ -322,7 +322,7 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                 </div>
                 ${sortedActive.map(bldg => {
                     const meta = buildingMeta[bldg]; 
-                    const bZones = processedData.filter(d => d.building === bldg);
+                    const bZones = calculationData.filter(d => d.building === bldg);
                     
                     // --- 1. 全棟匯總計算 ---
                     const bTotal = bZones.reduce((acc, curr) => acc + getVal(curr.area), 0);
