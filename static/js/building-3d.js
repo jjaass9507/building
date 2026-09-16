@@ -24,6 +24,13 @@ const measurement = (value, unit) => {
 const floorFacts = (floor) => `<span class="building-3d-facts"><span>樓高 <strong>${measurement(floor.height, 'm')}</strong></span><span>荷重 <strong>${measurement(floor.floorLoad, 'kgf/m²')}</strong></span><span class="building-3d-process">製程 <strong>${escapeHtml(floor.usageLabel || '未提供')}</strong></span></span>`;
 
 const isSummaryFloor = (floor) => String(floor || '').trim().toUpperCase() === 'ALL';
+const isRaftFoundationFloor = (floor) => /筏\s*基|raft/i.test(String(floor ?? ''));
+const compare3DFloors = (a, b) => {
+    const aIsRaft = isRaftFoundationFloor(a.floor);
+    const bIsRaft = isRaftFoundationFloor(b.floor);
+    if (aIsRaft !== bIsRaft) return aIsRaft ? -1 : 1;
+    return Number(a.floorWeight || 0) - Number(b.floorWeight || 0);
+};
 const METRICS = { height: '樓高', floorLoad: '荷重', usage: '製程', area: '面積' };
 const metricValue = (floor, metric, unit) => {
     if (metric === 'usage') return escapeHtml(floor.usageLabel || '未提供');
@@ -59,7 +66,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
     const allRows = processedData.filter(item => item.building === buildingName);
     const floors = allRows
         .filter(item => !isSummaryFloor(item.floor))
-        .sort((a, b) => a.floorWeight - b.floorWeight);
+        .sort(compare3DFloors);
     const unknownSummary = allRows.some(item => isSummaryFloor(item.floor));
     const meta = buildingMeta[buildingName] || {};
     const maxArea = Math.max(1, ...floors.map(item => getValue(item.area)));
@@ -168,7 +175,6 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
                                         </div>
                                         <div class="building-3d-podium" style="--podium-level:${coreBottom - 22}px" aria-hidden="true"><span></span></div>
                                         ${floorModels}
-                                        <div class="building-3d-roof-cap" style="--roof-level:${coreBottom + coreSpan + 4}px" aria-hidden="true"><span></span></div>
                                     </div>
                                 </div>` : renderEmptyBuilding(buildingName, unknownSummary)}
                         </div>
@@ -245,7 +251,7 @@ export const bindBuilding3DInteractions = (state) => {
         stage.style.left = '50%';
         stage.style.top = '52%';
         stage.style.setProperty('--building-zoom', '1');
-        const modelSelector = '.building-3d-top,.building-3d-front,.building-3d-side,.building-3d-podium > span,.building-3d-roof-cap > span';
+        const modelSelector = '.building-3d-top,.building-3d-front,.building-3d-side,.building-3d-podium > span';
         const modelBounds = () => [...stage.querySelectorAll(modelSelector)].map(el => el.getBoundingClientRect());
         const faces = modelBounds();
         if (!faces.length) return;
