@@ -15,7 +15,7 @@ vm.runInContext(source, context);
 const run = code => vm.runInContext(code, context);
 
 test('multiple process labels are classified as mixed', () => {
-    for (const label of ['研磨/清洗', '研磨、清洗', '研磨 + 清洗', '研磨；清洗']) {
+    for (const label of ['研磨/清洗', '研磨／清洗', '研磨、清洗', '研磨 + 清洗', '研磨；清洗']) {
         context.labelFixture = label;
         assert.equal(run('classifyProcess(labelFixture)'), '混合');
     }
