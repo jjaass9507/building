@@ -3,7 +3,7 @@ import { apiUrl, formatArea, formatPct } from './utils.js';
 const MIXED_PROCESS = '混合';
 const UNCLASSIFIED_PROCESS = '未分類';
 const UNGROUPED_GROUP = '未分群';
-const PROCESS_SEPARATORS = /[、,，;；/＋+＆&|\n\r]+/;
+const PROCESS_SEPARATORS = /[、,，;；/／＋+＆&|\n\r]+/;
 const GROUP_COLORS = ['#0284C7', '#059669', '#7C3AED', '#EA580C', '#DB2777', '#0891B2', '#4F46E5', '#65A30D'];
 const SPECIAL_COLORS = { [MIXED_PROCESS]: '#D97706', [UNGROUPED_GROUP]: '#64748B' };
 
