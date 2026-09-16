@@ -40,12 +40,14 @@ static_path = os.path.join(base_dir, 'static')
 data_file_path = os.path.join(base_dir, 'data.json')
 utility_trends_file_path = os.path.join(base_dir, 'utility_trends.json')
 process_groups_file_path = os.path.join(base_dir, 'process_groups.json')
+trend_reference_file_path = os.path.join(base_dir, 'trend_reference.json')
 permission_file_path = os.path.join(base_dir, 'permissions.json')
 log_file_path = os.path.join(base_dir, 'access_log.txt')
 upload_dir = os.path.join(base_dir, 'uploads')
 backup_dir = os.path.join(base_dir, 'data_backups')
 utility_backup_dir = os.path.join(base_dir, 'utility_trend_backups')
 process_group_backup_dir = os.path.join(base_dir, 'process_group_backups')
+trend_reference_backup_dir = os.path.join(base_dir, 'trend_reference_backups')
 processed_dir = os.path.join(base_dir, 'processed')
 cleaned_excel_path = os.path.join(processed_dir, '樓層面積資訊_系統匯入檔.xlsx')
 data_changes_file_path = os.path.join(base_dir, 'data_changes.json')
@@ -564,7 +566,7 @@ def require_roles(*allowed_roles):
 # --- 5. 資料上傳與版本留存 ---
 
 def ensure_runtime_dirs():
-    for folder in [upload_dir, backup_dir, utility_backup_dir, process_group_backup_dir, processed_dir]:
+    for folder in [upload_dir, backup_dir, utility_backup_dir, process_group_backup_dir, trend_reference_backup_dir, processed_dir]:
         os.makedirs(folder, exist_ok=True)
 
 def is_allowed_upload(filename):
@@ -651,6 +653,7 @@ def load_utility_trends():
     with open(utility_trends_file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+
 def create_default_process_groups():
     return {
         "schema_version": "1.0",
@@ -733,6 +736,56 @@ def write_process_groups(data):
     with open(temp_path, 'w', encoding='utf-8') as handle:
         json.dump(data, handle, ensure_ascii=False, indent=2)
     os.replace(temp_path, process_groups_file_path)
+
+
+def create_default_trend_reference():
+    return {
+        "schema_version": "1.0",
+        "updated_at": None,
+        "updated_by": None,
+        "buildings": []
+    }
+
+
+def validate_trend_reference(payload, require_two=False):
+    if not isinstance(payload, dict):
+        raise ValueError("趨勢比較基準設定必須是 JSON object。")
+    buildings = payload.get("buildings", [])
+    if not isinstance(buildings, list):
+        raise ValueError("buildings 必須是陣列。")
+    normalized = []
+    for raw_name in buildings:
+        name = str(raw_name or "").strip()
+        if not name or name in normalized:
+            continue
+        if len(name) > 120:
+            raise ValueError("廠棟名稱不可超過 120 字。")
+        normalized.append(name)
+    if len(normalized) > 2:
+        raise ValueError("趨勢比較基準最多只能設定兩棟。")
+    if require_two and len(normalized) != 2:
+        raise ValueError("請選擇兩棟不同的趨勢比較基準。")
+    return {
+        "schema_version": "1.0",
+        "updated_at": payload.get("updated_at"),
+        "updated_by": payload.get("updated_by"),
+        "buildings": normalized
+    }
+
+
+def load_trend_reference():
+    if not os.path.exists(trend_reference_file_path):
+        return create_default_trend_reference()
+    with open(trend_reference_file_path, 'r', encoding='utf-8') as handle:
+        return validate_trend_reference(json.load(handle))
+
+
+def write_trend_reference(data):
+    ensure_runtime_dirs()
+    temp_path = os.path.join(processed_dir, f"trend_reference_pending_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json")
+    with open(temp_path, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+    os.replace(temp_path, trend_reference_file_path)
 
 def validate_utility_trends(payload):
     if not isinstance(payload, dict):
@@ -964,6 +1017,57 @@ def save_process_groups():
         return jsonify({"error": "validation_failed", "message": str(e)}), 400
     except Exception as e:
         logging.exception("Unexpected process group update error")
+        return jsonify({"error": "save_failed", "message": str(e)}), 500
+
+
+@app.route('/api/trend-reference')
+@require_roles("admin", "user", "viewer")
+def get_trend_reference():
+    try:
+        return jsonify({"success": True, "data": load_trend_reference()})
+    except (ValueError, OSError, json.JSONDecodeError) as e:
+        return jsonify({"error": "load_failed", "message": str(e)}), 500
+
+
+@app.route('/api/admin/trend-reference', methods=['POST'])
+@require_roles("admin")
+def save_trend_reference():
+    username = get_current_user()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_json", "message": "請提供 JSON 格式資料。"}), 400
+
+    try:
+        data = validate_trend_reference(payload, require_two=True)
+        available = {
+            str(item.get("棟別") or "").strip()
+            for item in load_current_data()
+            if isinstance(item, dict) and str(item.get("棟別") or "").strip()
+        }
+        missing = [name for name in data["buildings"] if name not in available]
+        if missing:
+            raise ValueError(f"找不到廠棟：{', '.join(missing)}。")
+
+        data["updated_at"] = datetime.now().isoformat(timespec='seconds')
+        data["updated_by"] = username
+        ensure_runtime_dirs()
+        backup_path = None
+        if os.path.exists(trend_reference_file_path):
+            backup_name = f"trend_reference_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{safe_username(username)}.json"
+            backup_path = os.path.join(trend_reference_backup_dir, backup_name)
+            shutil.copy2(trend_reference_file_path, backup_path)
+        write_trend_reference(data)
+        log_user_access(username, action='Update Trend Reference', extra=f"Buildings: {', '.join(data['buildings'])} | Backup: {backup_path or 'none'}")
+        return jsonify({
+            "success": True,
+            "message": "成長趨勢比較基準已更新。",
+            "backup_file": os.path.basename(backup_path) if backup_path else None,
+            "data": data
+        })
+    except ValueError as e:
+        return jsonify({"error": "validation_failed", "message": str(e)}), 400
+    except Exception as e:
+        logging.exception("Unexpected trend reference update error")
         return jsonify({"error": "save_failed", "message": str(e)}), 500
 
 
