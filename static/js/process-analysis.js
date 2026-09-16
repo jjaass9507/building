@@ -1,4 +1,4 @@
-import { apiUrl, formatArea, formatPct } from './utils.js';
+import { apiUrl, filterRowsByScope, formatArea, formatPct } from './utils.js?v=20260916-unified-scope';
 
 const MIXED_PROCESS = '混合';
 const UNCLASSIFIED_PROCESS = '未分類';
@@ -42,13 +42,9 @@ const processGroupLookup = (config) => {
 };
 
 export const buildProcessAnalysis = (rows, config, options = {}) => {
-    const includeUnfinished = Boolean(options.includeUnfinished);
-    const buildings = Array.isArray(options.buildings) && options.buildings.length ? new Set(options.buildings) : null;
     const processTotals = new Map();
 
-    (Array.isArray(rows) ? rows : []).forEach(row => {
-        if (buildings && !buildings.has(row.building)) return;
-        if (!includeUnfinished && row.status === '未成廠') return;
+    filterRowsByScope(rows, options).forEach(row => {
         const cleanArea = numericValue(row.cleanRoomArea);
         if (!(cleanArea > 0)) return;
         const process = classifyProcess(row.processLabel ?? row.usageLabel);
