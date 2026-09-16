@@ -13,6 +13,7 @@ uploads/
 processed/
 data_backups/
 process_group_backups/
+trend_reference_backups/
 data_changes.json
 
 # office temp files
