@@ -8,7 +8,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const utils = fs.readFileSync(path.join(root, 'static/js/utils.js'), 'utf8').replaceAll('export ', '');
 const source = fs.readFileSync(path.join(root, 'static/js/process-analysis.js'), 'utf8')
-    .replace("import { apiUrl, formatArea, formatPct } from './utils.js';", utils)
+    .replace("import { apiUrl, filterRowsByScope, formatArea, formatPct } from './utils.js?v=20260916-unified-scope';", utils)
     .replaceAll('export ', '');
 const context = vm.createContext({});
 vm.runInContext(source, context);
@@ -42,4 +42,18 @@ test('clean-room areas aggregate by process, mixed and configured parent group',
     ]);
     const withUnfinished = run("buildProcessAnalysis(rowsFixture, configFixture, {includeUnfinished:true, buildings:['K18']})");
     assert.equal(withUnfinished.total, 380);
+});
+
+test('all aggregate views share building and unfinished scope rules', () => {
+    context.scopeRowsFixture = [
+        { building:'K18', floor:'1F', status:'已成廠', cleanRoomArea:100 },
+        { building:'K18', floor:'ALL', status:'未成廠', cleanRoomArea:200 },
+        { building:'K5', floor:'1F', status:'已成廠', cleanRoomArea:999 }
+    ];
+    const established = run("filterRowsByScope(scopeRowsFixture, {includeUnfinished:false, buildings:['K18']})");
+    assert.deepEqual(Array.from(established, row => [row.building, row.floor, row.cleanRoomArea]), [
+        ['K18', '1F', 100]
+    ]);
+    const withPlanned = run("filterRowsByScope(scopeRowsFixture, {includeUnfinished:true, buildings:['K18']})");
+    assert.equal(withPlanned.reduce((sum, row) => sum + row.cleanRoomArea, 0), 300);
 });
