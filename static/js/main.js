@@ -1,7 +1,7 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js';
-import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-uniform-building-scale';
+import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-raft-bottom-no-roof-cap';
 
 // --- 狀態管理 (State) ---
 const state = {
