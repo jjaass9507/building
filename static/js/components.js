@@ -76,6 +76,11 @@ const getVal = (data) => {
     return Number.isFinite(val) ? val : 0;
 };
 
+const getAreaRatio = (part, total) => {
+    const totalValue = getVal(total);
+    return totalValue > 0 ? getVal(part) / totalValue : 0;
+};
+
 // ★ 獲取細項描述字串 (用於 Tooltip)
 const getDetailsTooltip = (label, data, formattedVal) => {
     const details = (data && typeof data === 'object' && data.details) ? data.details : null;
@@ -324,6 +329,7 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                     const bC_Area = bZones.reduce((acc, c) => acc + getVal(c.cleanRoomArea), 0);
                     const bP_Area = bZones.reduce((acc, c) => acc + getVal(c.prodArea), 0);
                     const bU_Area = bZones.reduce((acc, c) => acc + getVal(c.pubArea), 0);
+                    const cleanRoomRatio = getAreaRatio(bC_Area, bTotal);
                     
                     // ★ 廠務全棟匯總
                     let bF_Area = 0;
@@ -435,6 +441,14 @@ export const renderMatrix = (state, activeBuildings, activeFloors, processedData
                                         <span class="font-bold ${HEADER_INFO_VAL} text-slate-700 dark:text-slate-200">${formatArea(bTotal, state.unit).val}</span>
                                         <span class="text-[10px] text-slate-400">${state.unit === 'ping' ? '坪' : 'M²'}</span>
                                         <span class="ml-1 ${HEADER_INFO_TAG} font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/30 px-1 rounded border border-orange-100 dark:border-orange-800">容積 ${formatRateToPct(meta.capacityRate)}</span>
+                                    </div>
+                                </div>
+                                <div class="flex justify-between items-center px-2 py-0.5 bg-slate-50 dark:bg-slate-800 rounded border border-slate-100 dark:border-slate-700">
+                                    <span class="${HEADER_INFO_LABEL} font-bold text-slate-700 dark:text-slate-400">無塵室面積</span>
+                                    <div class="flex items-baseline gap-1">
+                                        <span class="font-bold ${HEADER_INFO_VAL} text-slate-700 dark:text-slate-200">${formatArea(bC_Area, state.unit).val}</span>
+                                        <span class="text-[10px] text-slate-400">${state.unit === 'ping' ? '坪' : 'M²'}</span>
+                                        <span class="ml-1 ${HEADER_INFO_TAG} font-bold text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/30 px-1 rounded border border-sky-100 dark:border-sky-800">比例 ${formatPct(cleanRoomRatio)}%</span>
                                     </div>
                                 </div>
                             </div>
