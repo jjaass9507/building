@@ -54,6 +54,14 @@ test('all aggregate views share building and unfinished scope rules', () => {
     assert.deepEqual(Array.from(established, row => [row.building, row.floor, row.cleanRoomArea]), [
         ['K18', '1F', 100]
     ]);
+    assert.equal(
+        run("buildProcessAnalysis(scopeRowsFixture, {groups:[]}, {includeUnfinished:false, buildings:['K18']}).total"),
+        100
+    );
     const withPlanned = run("filterRowsByScope(scopeRowsFixture, {includeUnfinished:true, buildings:['K18']})");
     assert.equal(withPlanned.reduce((sum, row) => sum + row.cleanRoomArea, 0), 300);
+    assert.equal(
+        run("buildProcessAnalysis(scopeRowsFixture, {groups:[]}, {includeUnfinished:true, buildings:['K18']}).total"),
+        300
+    );
 });
