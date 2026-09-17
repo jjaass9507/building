@@ -3,6 +3,7 @@ import { formatArea, apiUrl, filterRowsByScope } from './utils.js?v=20260916-uni
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js?v=20260916-cleanroom-summary';
 import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-raft-bottom-no-roof-cap';
 import { destroyProcessAnalysisChart, drawProcessAnalysisChart, fetchProcessGroupConfig, openProcessGroupAdmin, renderProcessAnalysisModal } from './process-analysis.js?v=20260916-unified-scope';
+import { configuredTrendReferences, fetchTrendReferenceConfig, formatEquivalentBuildingCount, getEquivalentBuildingCount, getTrendReferenceArea, openTrendReferenceAdmin } from './trend-reference.js?v=20260916-trend-reference';
 
 // --- 狀態管理 (State) ---
 const state = {
@@ -19,6 +20,8 @@ const state = {
     isUploading: false,
     isTrendOpen: false,
     trendMetric: 'clean',
+    trendReferenceConfig: { schema_version: '1.0', buildings: [] },
+    trendReferenceBuilding: null,
     isProcessAnalysisOpen: false,
     processGroupConfig: { schema_version: '1.0', groups: [] },
     isFilterCollapsed: true,
@@ -260,6 +263,20 @@ const renderTrendMetricButton = (key, label) => `
         ${label}
     </button>`;
 
+const getTrendReferenceContext = () => {
+    const buildings = configuredTrendReferences(state.trendReferenceConfig);
+    const building = buildings.includes(state.trendReferenceBuilding)
+        ? state.trendReferenceBuilding
+        : (buildings[0] || null);
+    const area = building ? getTrendReferenceArea(appData.processed, building, state.trendMetric) : 0;
+    return { buildings, building, area };
+};
+
+const renderTrendReferenceButton = (building, active) => `
+    <button type="button" onclick="window.app.setTrendReferenceBuilding(decodeURIComponent('${encodeURIComponent(building).replace(/'/g, '%27')}'))" class="px-4 py-2 text-sm font-black transition-all ${active ? 'bg-indigo-600 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'}">
+        ${escapeHtml(building)}
+    </button>`;
+
 const renderTrendModal = () => {
     if (!state.isTrendOpen) return '';
 
@@ -270,6 +287,9 @@ const renderTrendModal = () => {
     const totalClean = trend.cleanValues[trend.cleanValues.length - 1] || 0;
     const totalProd = trend.prodValues[trend.prodValues.length - 1] || 0;
     const totalDisplay = formatArea(totalClean + totalProd, state.unit);
+    const reference = getTrendReferenceContext();
+    const referenceDisplay = formatArea(reference.area, state.unit);
+    const latestEquivalent = getEquivalentBuildingCount(series.latestAnnual, reference.area);
 
     return `
         <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onclick="window.app.closeTrendModal()">
@@ -291,6 +311,11 @@ const renderTrendModal = () => {
                     </div>
                 </div>
 
+                <div class="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-800 dark:bg-slate-950/50 md:flex-row md:items-center md:justify-between">
+                    <div class="flex flex-wrap items-center gap-2"><span class="mr-1 text-sm font-black text-slate-600 dark:text-slate-300">面積比較基準</span>${reference.buildings.length ? reference.buildings.map(building => renderTrendReferenceButton(building, building === reference.building)).join('') : '<span class="text-sm font-bold text-amber-600">尚未由 Admin 設定</span>'}</div>
+                    ${reference.building ? `<div class="text-sm font-bold text-slate-500 dark:text-slate-400">1 棟 ${escapeHtml(reference.building)} = <span class="font-mono text-indigo-600 dark:text-indigo-300">${referenceDisplay.val} ${referenceDisplay.unit}</span> ${series.metric.shortLabel}</div>` : ''}
+                </div>
+
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 px-6 pt-5">
                     <div class="rounded-xl border ${series.metric.borderClass} ${series.metric.bgClass} p-4">
                         <div class="text-sm font-bold ${series.metric.textClass}">目前累計${series.metric.shortLabel}</div>
@@ -300,6 +325,7 @@ const renderTrendModal = () => {
                         <div class="text-sm font-bold text-indigo-600 dark:text-indigo-300">最後年度新增量</div>
                         <div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${latestAnnualDisplay.val}<span class="ml-1 text-sm text-slate-400">${latestAnnualDisplay.unit}</span></div>
                         <div class="mt-1 text-xs font-bold text-slate-400">年增率：${formatGrowthRate(series.latestRate)}</div>
+                        ${reference.building && latestEquivalent !== null ? `<div class="mt-1 text-xs font-black text-indigo-600 dark:text-indigo-300">約等於 ${formatEquivalentBuildingCount(latestEquivalent)} 棟 ${escapeHtml(reference.building)}</div>` : ''}
                     </div>
                     <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
                         <div class="text-sm font-bold text-slate-500 dark:text-slate-300">無塵室 + 生產週邊合計</div>
@@ -334,6 +360,7 @@ const renderTrendModal = () => {
                                     <th class="px-4 py-2 text-left">年份</th>
                                     <th class="px-4 py-2 text-right">年度新增量</th>
                                     <th class="px-4 py-2 text-right">年增比例</th>
+                                    <th class="px-4 py-2 text-right">約當基準棟</th>
                                     <th class="px-4 py-2 text-right">累計總面積</th>
                                 </tr>
                             </thead>
@@ -341,11 +368,13 @@ const renderTrendModal = () => {
                                 ${trend.additions.map((row, idx) => {
                                     const annual = formatArea(series.annualValues[idx] || 0, state.unit);
                                     const cumulative = formatArea(series.cumulativeValues[idx] || 0, state.unit);
+                                    const equivalent = row.year === 0 ? null : getEquivalentBuildingCount(series.annualValues[idx], reference.area);
                                     return `
                                         <tr class="bg-white dark:bg-slate-900">
                                             <td class="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">${formatYearLabel(row.year)}</td>
                                             <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${annual.val} ${annual.unit}</td>
                                             <td class="px-4 py-2 text-right font-mono text-slate-500 dark:text-slate-300">${formatGrowthRate(series.annualRates[idx])}</td>
+                                            <td class="px-4 py-2 text-right font-mono font-bold text-indigo-600 dark:text-indigo-300">${reference.building && equivalent !== null ? `${formatEquivalentBuildingCount(equivalent)} 棟 ${escapeHtml(reference.building)}` : '-'}</td>
                                             <td class="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-200">${cumulative.val} ${cumulative.unit}</td>
                                         </tr>`;
                                 }).join('')}
@@ -374,6 +403,7 @@ const drawTrendChart = () => {
 
     const trend = buildAreaTrendData();
     const series = getTrendSeries(trend);
+    const reference = getTrendReferenceContext();
     const toUnitValue = (value) => state.unit === 'ping' ? value * 0.3025 : value;
     const unitLabel = state.unit === 'ping' ? '坪' : 'm²';
     const textColor = state.isDarkMode ? '#CBD5E1' : '#334155';
@@ -399,6 +429,10 @@ const drawTrendChart = () => {
                 const rate = formatGrowthRate(series.annualRates[index]);
                 const label = `${Math.round(value).toLocaleString()} ${unitLabel}${rate !== '-' ? ` / ${rate}` : ''}`;
                 ctx.fillText(label, bar.x, bar.y - 6);
+                if (index > 0 && reference.building && reference.area > 0) {
+                    const equivalent = getEquivalentBuildingCount(series.annualValues[index], reference.area);
+                    ctx.fillText(`≈ ${formatEquivalentBuildingCount(equivalent)} 棟 ${reference.building}`, bar.x, bar.y - 20);
+                }
             });
             ctx.restore();
         }
@@ -460,7 +494,7 @@ const drawTrendChart = () => {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            layout: { padding: { top: 24 } },
+            layout: { padding: { top: 40 } },
             plugins: {
                 legend: { labels: { color: textColor, font: { weight: 'bold' } } },
                 tooltip: {
@@ -468,7 +502,9 @@ const drawTrendChart = () => {
                         label: (ctx) => {
                             const value = Math.round(ctx.parsed.y).toLocaleString();
                             const rate = formatGrowthRate(series.annualRates[ctx.dataIndex]);
-                            return `年增量: ${value} ${unitLabel}｜年增比例: ${rate}`;
+                            const equivalent = ctx.dataIndex > 0 ? getEquivalentBuildingCount(series.annualValues[ctx.dataIndex], reference.area) : null;
+                            const comparison = reference.building && equivalent !== null ? `｜約 ${formatEquivalentBuildingCount(equivalent)} 棟 ${reference.building}` : '';
+                            return `年增量: ${value} ${unitLabel}｜年增比例: ${rate}${comparison}`;
                         }
                     }
                 }
@@ -517,6 +553,7 @@ const renderAdminUploadPanel = () => {
                     <div class="flex flex-wrap gap-2">
                         <button type="button" onclick="window.buildingDataAdmin?.open()" class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-black text-white hover:bg-slate-700 dark:bg-blue-600 dark:hover:bg-blue-500"><i data-lucide="table-properties" class="mr-1 inline h-4 w-4"></i>資料維護</button>
                         <button type="button" onclick="window.app.openProcessGroupAdmin()" class="rounded-lg border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-black text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"><i data-lucide="network" class="mr-1 inline h-4 w-4"></i>製程大群組</button>
+                        <button type="button" onclick="window.app.openTrendReferenceAdmin()" class="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-black text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"><i data-lucide="scale" class="mr-1 inline h-4 w-4"></i>趨勢比較基準</button>
                         <button type="button" onclick="window.buildingDataAdmin?.export('readable')" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">人員閱讀版 Excel</button>
                         <button type="button" onclick="window.buildingDataAdmin?.export('standard')" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">標準資料版 Excel</button>
                     </div>
@@ -547,6 +584,20 @@ const loadProcessGroupData = async () => {
     } catch (error) {
         console.warn('製程大群組設定載入失敗，暫以未分群顯示。', error);
         state.processGroupConfig = { schema_version: '1.0', groups: [] };
+    }
+};
+
+const loadTrendReferenceData = async () => {
+    try {
+        state.trendReferenceConfig = await fetchTrendReferenceConfig();
+        const buildings = configuredTrendReferences(state.trendReferenceConfig);
+        if (!buildings.includes(state.trendReferenceBuilding)) {
+            state.trendReferenceBuilding = buildings[0] || null;
+        }
+    } catch (error) {
+        console.warn('趨勢比較基準載入失敗。', error);
+        state.trendReferenceConfig = { schema_version: '1.0', buildings: [] };
+        state.trendReferenceBuilding = null;
     }
 };
 
@@ -654,6 +705,11 @@ window.app = {
         state.trendMetric = metric;
         render();
     },
+    setTrendReferenceBuilding: (building) => {
+        if (!configuredTrendReferences(state.trendReferenceConfig).includes(building)) return;
+        state.trendReferenceBuilding = building;
+        render();
+    },
     toggleFilterPanel: () => {
         state.isFilterCollapsed = !state.isFilterCollapsed;
         render();
@@ -691,6 +747,15 @@ window.app = {
         config: state.processGroupConfig,
         onSaved: async config => {
             state.processGroupConfig = config;
+            render();
+        }
+    }),
+    openTrendReferenceAdmin: () => openTrendReferenceAdmin({
+        buildingNames: Object.keys(appData.meta),
+        config: state.trendReferenceConfig,
+        onSaved: async config => {
+            state.trendReferenceConfig = config;
+            state.trendReferenceBuilding = configuredTrendReferences(config)[0] || null;
             render();
         }
     }),
@@ -827,7 +892,7 @@ document.addEventListener('keydown', event => {
 
 window.addEventListener('building-data-saved', async () => {
     try {
-        await Promise.all([loadData(), loadProcessGroupData()]);
+        await Promise.all([loadData(), loadProcessGroupData(), loadTrendReferenceData()]);
         state.selectedZone = null;
         state.selectedBuilding = null;
         render();
@@ -851,7 +916,7 @@ const init = async () => {
             }
         }
 
-        await Promise.all([loadData(), loadProcessGroupData()]);
+        await Promise.all([loadData(), loadProcessGroupData(), loadTrendReferenceData()]);
 
         if (window.innerWidth < 768) {
             const allBuildings = Object.keys(appData.meta);
