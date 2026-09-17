@@ -50,6 +50,23 @@ test('ALL is a summary, while basement and roof labels remain real floors', () =
 });
 
 
+test('RF roof floors do not render an extra top slab', () => {
+    for (const floor of ['RF', 'R1F', 'R2F', '1RF']) {
+        assert.equal(run(`isRoofFloor('${floor}')`), true);
+    }
+    for (const floor of ['B1F', '1F', 'RFA']) {
+        assert.equal(run(`isRoofFloor('${floor}')`), false);
+    }
+
+    context.roofRows = [
+        { id:'1f', building:'K18', floor:'1F', floorWeight:1, area:4000, height:4.8, floorLoad:1000, usageLabel:'製程', status:'已成廠' },
+        { id:'rf', building:'K18', floor:'RF', floorWeight:99, area:4000, height:4.8, floorLoad:1000, usageLabel:'屋頂', status:'已成廠' }
+    ];
+    const html = run(`renderBuilding3DModal({isBuilding3DOpen:true,building3DName:'K18',building3DMetric:'usage',building3DView:'overview',building3DRotation:0,building3DTilt:90,building3DZoom:1,selected3DFloorId:null,unit:'m2'},{},roofRows)`);
+    assert.equal((html.match(/class="building-3d-floor /g) || []).length, 2);
+    assert.equal((html.match(/class="building-3d-top"/g) || []).length, 1);
+});
+
 test('all floors remain in one continuous 3D building', () => {
     const data = Array.from({ length: 24 }, (_, index) => ({
         id: String(index), building: 'K18', floor: `${index + 1}F`, floorWeight: index + 1,
