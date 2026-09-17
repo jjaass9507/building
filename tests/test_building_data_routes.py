@@ -16,6 +16,10 @@ class BuildingDataRouteTests(unittest.TestCase):
         self.audit_path = os.path.join(self.folder.name, "data_changes.json")
         self.backup_path = os.path.join(self.folder.name, "backups")
         self.processed_path = os.path.join(self.folder.name, "processed")
+        self.process_groups_path = os.path.join(self.folder.name, "process_groups.json")
+        self.process_group_backup_path = os.path.join(self.folder.name, "process_group_backups")
+        self.trend_reference_path = os.path.join(self.folder.name, "trend_reference.json")
+        self.trend_reference_backup_path = os.path.join(self.folder.name, "trend_reference_backups")
         with open(self.data_path, "w", encoding="utf-8") as handle:
             json.dump(normalize_dataset(SAMPLE_DATA), handle, ensure_ascii=False)
 
@@ -24,6 +28,10 @@ class BuildingDataRouteTests(unittest.TestCase):
             patch.object(app_module, "data_changes_file_path", self.audit_path),
             patch.object(app_module, "backup_dir", self.backup_path),
             patch.object(app_module, "processed_dir", self.processed_path),
+            patch.object(app_module, "process_groups_file_path", self.process_groups_path),
+            patch.object(app_module, "process_group_backup_dir", self.process_group_backup_path),
+            patch.object(app_module, "trend_reference_file_path", self.trend_reference_path),
+            patch.object(app_module, "trend_reference_backup_dir", self.trend_reference_backup_path),
         ]
         for item in self.patches:
             item.start()
@@ -69,6 +77,48 @@ class BuildingDataRouteTests(unittest.TestCase):
         with open(self.audit_path, "r", encoding="utf-8") as handle:
             audit = json.load(handle)
         self.assertEqual(audit[-1]["reason"], "單元測試修正面積")
+
+    def test_process_groups_can_be_managed_and_reject_duplicate_assignment(self):
+        empty_response = self.client.get("/api/process-groups")
+        self.assertEqual(empty_response.status_code, 200)
+        self.assertEqual(empty_response.get_json()["data"]["groups"], [])
+
+        save_response = self.client.post("/api/admin/process-groups", json={"groups": [
+            {"id": "front", "name": "前段製程", "processes": ["研磨", "清洗"]},
+            {"id": "back", "name": "後段製程", "processes": ["封裝"]},
+        ]})
+        self.assertEqual(save_response.status_code, 200)
+        saved = save_response.get_json()["data"]
+        self.assertEqual(saved["updated_by"], "Local-Dev")
+        self.assertEqual(saved["groups"][0]["processes"], ["研磨", "清洗"])
+
+        duplicate_response = self.client.post("/api/admin/process-groups", json={"groups": [
+            {"name": "群組一", "processes": ["研磨"]},
+            {"name": "群組二", "processes": ["研磨"]},
+        ]})
+        self.assertEqual(duplicate_response.status_code, 400)
+        self.assertIn("不可重複分群", duplicate_response.get_json()["message"])
+
+    def test_trend_reference_requires_two_existing_distinct_buildings(self):
+        empty_response = self.client.get("/api/trend-reference")
+        self.assertEqual(empty_response.status_code, 200)
+        self.assertEqual(empty_response.get_json()["data"]["buildings"], [])
+
+        dataset = normalize_dataset(SAMPLE_DATA + [{**SAMPLE_DATA[0], "棟別": "K5"}])
+        with open(self.data_path, "w", encoding="utf-8") as handle:
+            json.dump(dataset, handle, ensure_ascii=False)
+
+        save_response = self.client.post("/api/admin/trend-reference", json={"buildings": ["K18", "K5"]})
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(save_response.get_json()["data"]["buildings"], ["K18", "K5"])
+
+        duplicate_response = self.client.post("/api/admin/trend-reference", json={"buildings": ["K18", "K18"]})
+        self.assertEqual(duplicate_response.status_code, 400)
+        self.assertIn("兩棟不同", duplicate_response.get_json()["message"])
+
+        missing_response = self.client.post("/api/admin/trend-reference", json={"buildings": ["K18", "K99"]})
+        self.assertEqual(missing_response.status_code, 400)
+        self.assertIn("找不到廠棟", missing_response.get_json()["message"])
 
 
 if __name__ == "__main__":
