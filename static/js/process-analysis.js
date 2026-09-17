@@ -6,6 +6,7 @@ const UNGROUPED_GROUP = '未分群';
 const PROCESS_SEPARATORS = /[、,，;；/／＋+＆&|\n\r]+/;
 const GROUP_COLORS = ['#0284C7', '#059669', '#7C3AED', '#EA580C', '#DB2777', '#0891B2', '#4F46E5', '#65A30D'];
 const SPECIAL_COLORS = { [MIXED_PROCESS]: '#D97706', [UNGROUPED_GROUP]: '#64748B' };
+const STATUS_COLORS = { established: '#0F8C88', unfinished: '#D97706' };
 
 const escapeHtml = (value) => String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -44,11 +45,15 @@ const processGroupLookup = (config) => {
 export const buildProcessAnalysis = (rows, config, options = {}) => {
     const processTotals = new Map();
 
-    filterRowsByScope(rows, options).forEach(row => {
+    // 製程分析固定同時呈現已成廠與未成廠，只沿用目前選取的廠棟範圍。
+    filterRowsByScope(rows, { ...options, includeUnfinished: true }).forEach(row => {
         const cleanArea = numericValue(row.cleanRoomArea);
         if (!(cleanArea > 0)) return;
         const process = classifyProcess(row.processLabel ?? row.usageLabel);
-        processTotals.set(process, (processTotals.get(process) || 0) + cleanArea);
+        const totals = processTotals.get(process) || { establishedArea: 0, unfinishedArea: 0 };
+        if (row.status === '未成廠') totals.unfinishedArea += cleanArea;
+        else totals.establishedArea += cleanArea;
+        processTotals.set(process, totals);
     });
 
     const lookup = processGroupLookup(config);
@@ -59,16 +64,28 @@ export const buildProcessAnalysis = (rows, config, options = {}) => {
         return lookup.get(process) || { name: UNGROUPED_GROUP, groupIndex: configuredGroups.length + 1 };
     };
 
-    const processes = [...processTotals.entries()].map(([process, area]) => {
+    const processes = [...processTotals.entries()].map(([process, statusTotals]) => {
         const group = getGroup(process);
-        return { process, area, group: group.name, groupIndex: group.groupIndex };
+        const area = statusTotals.establishedArea + statusTotals.unfinishedArea;
+        return { process, area, ...statusTotals, group: group.name, groupIndex: group.groupIndex };
     }).sort((a, b) => a.groupIndex - b.groupIndex || b.area - a.area || a.process.localeCompare(b.process, 'zh-TW'));
 
     const groupTotals = new Map();
-    processes.forEach(row => groupTotals.set(row.group, (groupTotals.get(row.group) || 0) + row.area));
-    const groups = [...groupTotals.entries()].map(([name, area]) => ({ name, area }));
+    processes.forEach(row => {
+        const totals = groupTotals.get(row.group) || { establishedArea: 0, unfinishedArea: 0 };
+        totals.establishedArea += row.establishedArea;
+        totals.unfinishedArea += row.unfinishedArea;
+        groupTotals.set(row.group, totals);
+    });
+    const groups = [...groupTotals.entries()].map(([name, statusTotals]) => ({
+        name,
+        ...statusTotals,
+        area: statusTotals.establishedArea + statusTotals.unfinishedArea
+    }));
     const total = processes.reduce((sum, row) => sum + row.area, 0);
-    return { processes, groups, total };
+    const establishedTotal = processes.reduce((sum, row) => sum + row.establishedArea, 0);
+    const unfinishedTotal = processes.reduce((sum, row) => sum + row.unfinishedArea, 0);
+    return { processes, groups, total, establishedTotal, unfinishedTotal };
 };
 
 const colorMapFor = (analysis, config) => {
@@ -89,7 +106,7 @@ export const fetchProcessGroupConfig = async () => {
 
 export const renderProcessAnalysisModal = (state, rows, config, buildings) => {
     if (!state.isProcessAnalysisOpen) return '';
-    const analysis = buildProcessAnalysis(rows, config, { includeUnfinished: state.includeUnfinished, buildings });
+    const analysis = buildProcessAnalysis(rows, config, { buildings });
     const colors = colorMapFor(analysis, config);
     const unitLabel = state.unit === 'ping' ? '坪' : 'M²';
     const scope = buildings?.length ? `${buildings.length} 棟已選廠棟` : '全部廠棟';
@@ -101,7 +118,7 @@ export const renderProcessAnalysisModal = (state, rows, config, buildings) => {
                     <div>
                         <div class="text-[11px] font-black uppercase tracking-[0.18em] text-sky-600">Cleanroom Process Analysis</div>
                         <h2 class="mt-1 text-xl font-black text-slate-900 dark:text-white">By 製程無塵室面積</h2>
-                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">${escapeHtml(scope)} · ${state.includeUnfinished ? '包含未成廠' : '僅已成廠'} · 複數製程統一歸入「混合」</p>
+                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">${escapeHtml(scope)} · 固定同時呈現已成廠與未成廠 · 複數製程統一歸入「混合」</p>
                     </div>
                     <button type="button" onclick="window.app.closeProcessAnalysis()" class="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800" title="關閉"><i data-lucide="x" class="h-5 w-5"></i></button>
                 </header>
@@ -110,19 +127,25 @@ export const renderProcessAnalysisModal = (state, rows, config, buildings) => {
                         <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                             ${analysis.groups.map(group => {
                                 const area = formatArea(group.area, state.unit);
+                                const established = formatArea(group.establishedArea, state.unit);
+                                const unfinished = formatArea(group.unfinishedArea, state.unit);
                                 return `<div class="border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/70">
                                     <div class="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400"><span class="h-2.5 w-2.5" style="background:${colors.get(group.name)}"></span>${escapeHtml(group.name)}</div>
                                     <div class="mt-1 font-mono text-lg font-black text-slate-800 dark:text-white">${area.val} <span class="text-xs text-slate-400">${area.unit}</span></div>
+                                    <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-bold"><span style="color:${STATUS_COLORS.established}">已成廠 ${established.val} ${established.unit}</span><span style="color:${STATUS_COLORS.unfinished}">未成廠 ${unfinished.val} ${unfinished.unit}</span></div>
                                 </div>`;
                             }).join('')}
                         </div>
+                        <div class="mt-4 flex flex-wrap items-center gap-4 text-xs font-bold text-slate-600 dark:text-slate-300"><span class="inline-flex items-center gap-2"><span class="h-3 w-3" style="background:${STATUS_COLORS.established}"></span>已成廠</span><span class="inline-flex items-center gap-2"><span class="h-3 w-3" style="background:${STATUS_COLORS.unfinished}"></span>未成廠</span><span class="font-normal text-slate-400">各製程以狀態分色堆疊，合計長度為該製程總面積。</span></div>
                         <div class="mt-5 border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-950/30" style="height:${Math.max(360, Math.min(900, analysis.processes.length * 36 + 90))}px"><canvas id="process-cleanroom-chart"></canvas></div>
                         <div class="mt-5 overflow-hidden border border-slate-200 dark:border-slate-700">
                             <table class="w-full border-collapse text-sm">
-                                <thead class="bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th class="px-4 py-2 text-left">大群組</th><th class="px-4 py-2 text-left">製程</th><th class="px-4 py-2 text-right">無塵室面積</th><th class="px-4 py-2 text-right">占比</th></tr></thead>
+                                <thead class="bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300"><tr><th class="px-4 py-2 text-left">大群組</th><th class="px-4 py-2 text-left">製程</th><th class="px-4 py-2 text-right">已成廠</th><th class="px-4 py-2 text-right">未成廠</th><th class="px-4 py-2 text-right">合計</th><th class="px-4 py-2 text-right">占比</th></tr></thead>
                                 <tbody class="divide-y divide-slate-100 dark:divide-slate-800">${analysis.processes.map(row => {
                                     const area = formatArea(row.area, state.unit);
-                                    return `<tr><td class="px-4 py-2 font-bold text-slate-600 dark:text-slate-300">${escapeHtml(row.group)}</td><td class="px-4 py-2 text-slate-700 dark:text-slate-200">${escapeHtml(row.process)}</td><td class="px-4 py-2 text-right font-mono font-bold">${area.val} ${area.unit}</td><td class="px-4 py-2 text-right font-mono">${formatPct(row.area / analysis.total)}%</td></tr>`;
+                                    const established = formatArea(row.establishedArea, state.unit);
+                                    const unfinished = formatArea(row.unfinishedArea, state.unit);
+                                    return `<tr><td class="px-4 py-2 font-bold text-slate-600 dark:text-slate-300">${escapeHtml(row.group)}</td><td class="px-4 py-2 text-slate-700 dark:text-slate-200">${escapeHtml(row.process)}</td><td class="px-4 py-2 text-right font-mono font-bold" style="color:${STATUS_COLORS.established}">${established.val} ${established.unit}</td><td class="px-4 py-2 text-right font-mono font-bold" style="color:${STATUS_COLORS.unfinished}">${unfinished.val} ${unfinished.unit}</td><td class="px-4 py-2 text-right font-mono font-bold">${area.val} ${area.unit}</td><td class="px-4 py-2 text-right font-mono">${formatPct(row.area / analysis.total)}%</td></tr>`;
                                 }).join('')}</tbody>
                             </table>
                         </div>` : `<div class="flex min-h-[360px] items-center justify-center border border-dashed border-slate-300 text-sm font-bold text-slate-500 dark:border-slate-700">目前範圍沒有可加總的無塵室面積。</div>`}
@@ -142,8 +165,7 @@ export const drawProcessAnalysisChart = (state, rows, config, buildings) => {
     const canvas = document.getElementById('process-cleanroom-chart');
     if (!canvas || typeof Chart === 'undefined') return;
     destroyProcessAnalysisChart();
-    const analysis = buildProcessAnalysis(rows, config, { includeUnfinished: state.includeUnfinished, buildings });
-    const colors = colorMapFor(analysis, config);
+    const analysis = buildProcessAnalysis(rows, config, { buildings });
     const toDisplay = value => state.unit === 'ping' ? value * 0.3025 : value;
     const unitLabel = state.unit === 'ping' ? '坪' : 'm²';
     processChart = new Chart(canvas, {
@@ -151,9 +173,15 @@ export const drawProcessAnalysisChart = (state, rows, config, buildings) => {
         data: {
             labels: analysis.processes.map(row => row.process),
             datasets: [{
-                label: `無塵室面積 (${unitLabel})`,
-                data: analysis.processes.map(row => toDisplay(row.area)),
-                backgroundColor: analysis.processes.map(row => colors.get(row.group)),
+                label: `已成廠 (${unitLabel})`,
+                data: analysis.processes.map(row => toDisplay(row.establishedArea)),
+                backgroundColor: STATUS_COLORS.established,
+                borderWidth: 0,
+                borderRadius: 2
+            }, {
+                label: `未成廠 (${unitLabel})`,
+                data: analysis.processes.map(row => toDisplay(row.unfinishedArea)),
+                backgroundColor: STATUS_COLORS.unfinished,
                 borderWidth: 0,
                 borderRadius: 2
             }]
@@ -163,12 +191,12 @@ export const drawProcessAnalysisChart = (state, rows, config, buildings) => {
             maintainAspectRatio: false,
             indexAxis: 'y',
             plugins: {
-                legend: { display: false },
+                legend: { display: true, position: 'top', align: 'end' },
                 tooltip: { callbacks: { afterLabel: context => `大群組：${analysis.processes[context.dataIndex]?.group || UNGROUPED_GROUP}` } }
             },
             scales: {
-                x: { beginAtZero: true, ticks: { callback: value => Number(value).toLocaleString() }, title: { display: true, text: `無塵室面積 (${unitLabel})` } },
-                y: { ticks: { autoSkip: false } }
+                x: { stacked: true, beginAtZero: true, ticks: { callback: value => Number(value).toLocaleString() }, title: { display: true, text: `無塵室面積 (${unitLabel})` } },
+                y: { stacked: true, ticks: { autoSkip: false } }
             }
         }
     });
