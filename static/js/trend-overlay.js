@@ -1,7 +1,8 @@
 import { processRawData } from './data.js';
 import { formatArea, apiUrl } from './utils.js';
+import { configuredTrendReferences, formatEquivalentBuildingCount, getEquivalentBuildingCount } from './trend-reference.js?v=20260917-overlay-reference';
 
-const OVERLAY_VERSION = 'axis-buildings-toggle-all-right-labels-v8';
+const OVERLAY_VERSION = 'axis-buildings-reference-comparison-v9';
 const BASELINE_YEAR = 25;
 const BASELINE_LABEL = 'Y25';
 
@@ -15,6 +16,7 @@ const METRICS = {
 let selected = ['clean', 'production_area', 'power_demand', 'water_demand'];
 let charts = {};
 let trendCache = null;
+let selectedReferenceBuilding = null;
 
 const normalizeYearCode = (year) => {
   const num = Number(year);
@@ -170,8 +172,19 @@ function buildUtilityTrend(utilityData) {
 
 async function buildTrendData() {
   if (trendCache) return trendCache;
-  const [rawData, utilityData] = await Promise.all([fetchJson(apiUrl('/api/data'), []), fetchJson(apiUrl('/api/utility-trends'), { metrics: [] })]);
-  trendCache = { metrics: { ...buildAreaTrend(rawData), ...buildUtilityTrend(utilityData) } };
+  const [rawData, utilityData, referenceConfig] = await Promise.all([
+    fetchJson(apiUrl('/api/data'), []),
+    fetchJson(apiUrl('/api/utility-trends'), { metrics: [] }),
+    fetchJson(apiUrl('/api/trend-reference'), { success: true, data: { buildings: [] } })
+  ]);
+  const { processedData } = processRawData(rawData || []);
+  const referenceBuildings = configuredTrendReferences(referenceConfig?.data || referenceConfig);
+  if (!referenceBuildings.includes(selectedReferenceBuilding)) selectedReferenceBuilding = referenceBuildings[0] || null;
+  trendCache = {
+    metrics: { ...buildAreaTrend(rawData), ...buildUtilityTrend(utilityData) },
+    processedData,
+    referenceBuildings
+  };
   return trendCache;
 }
 function destroyCharts() { Object.values(charts).forEach((chart) => chart?.destroy?.()); charts = {}; }
@@ -180,6 +193,42 @@ function renderMetricButton(metric) { const active = selected.includes(metric.ke
 function renderAreaUnitButton(unit, label) {
   const active = getAreaUnit() === unit;
   return `<button data-trend-unit="${unit}" class="px-3 py-2 text-sm font-black transition-colors ${active ? 'bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'}">${label}</button>`;
+}
+function getReferenceArea(trend, metricKey, building = selectedReferenceBuilding) {
+  if (!building || !['clean', 'production_area'].includes(metricKey)) return 0;
+  return (trend.processedData || [])
+    .filter((row) => row.building === building)
+    .reduce((sum, row) => {
+      const clean = Number(row.cleanRoomArea || 0);
+      const surrounding = Number(row.prodArea || 0);
+      return sum + (metricKey === 'clean' ? clean : clean + surrounding);
+    }, 0);
+}
+function getReferenceComparison(trend, metricKey, annualArea) {
+  const referenceArea = getReferenceArea(trend, metricKey);
+  return {
+    area: referenceArea,
+    count: getEquivalentBuildingCount(annualArea, referenceArea)
+  };
+}
+function renderReferenceSelector(trend) {
+  const buildings = trend.referenceBuildings || [];
+  if (!buildings.length) {
+    return `<div class="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm font-bold text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">面積比較基準尚未由 Admin 設定。</div>`;
+  }
+  const clean = fmt(getReferenceArea(trend, 'clean'), METRICS.clean);
+  const production = fmt(getReferenceArea(trend, 'production_area'), METRICS.production_area);
+  return `<div class="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-800 dark:bg-slate-950/50 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="mr-1 text-sm font-black text-slate-600 dark:text-slate-300">面積比較基準</span>
+      ${buildings.map((building) => `<button type="button" data-trend-reference="${escapeHtml(building)}" class="px-4 py-2 text-sm font-black transition-all ${building === selectedReferenceBuilding ? 'bg-indigo-600 text-white shadow-sm' : 'border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'}">${escapeHtml(building)}</button>`).join('')}
+    </div>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+      <span>1 棟 ${escapeHtml(selectedReferenceBuilding)}：</span>
+      <span>無塵室 <b class="font-mono text-sky-600 dark:text-sky-300">${clean.val} ${clean.unit}</b></span>
+      <span>生產面積 <b class="font-mono text-emerald-600 dark:text-emerald-300">${production.val} ${production.unit}</b></span>
+    </div>
+  </div>`;
 }
 function renderBuildingAxisDetails(data, metric) {
   if (metric.type !== 'area') return '';
@@ -248,6 +297,7 @@ function renderChartSection(metric, trend) {
   const latestAnnual = fmt(data.annual.at(-1) || 0, metric);
   const isArea = metric.type === 'area';
   const latestBuildings = data.rows.at(-1)?.buildings || [];
+  const latestComparison = isArea ? getReferenceComparison(trend, metric.key, data.annual.at(-1) || 0) : { area: 0, count: null };
 
   return `<section class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-3">
     <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-2 mb-2">
@@ -269,6 +319,7 @@ function renderChartSection(metric, trend) {
           <div class="text-xs font-bold text-slate-500 dark:text-slate-300">最後年度新增</div>
           <div class="mt-0.5 text-lg font-black text-slate-800 dark:text-white">${latestAnnual.val}<span class="ml-1 text-xs text-slate-400">${latestAnnual.unit}</span></div>
           <div class="text-[11px] font-bold text-slate-400">新增比例：${formatRate(data.rates.at(-1))}</div>
+          ${isArea && latestComparison.count !== null ? `<div class="text-[11px] font-black text-indigo-600 dark:text-indigo-300">約等於 ${formatEquivalentBuildingCount(latestComparison.count)} 棟 ${escapeHtml(selectedReferenceBuilding)}</div>` : ''}
           ${isArea && latestBuildings.length ? `<div class="truncate text-[11px] font-bold text-slate-400">廠棟：${escapeHtml(latestBuildings.join('、'))}</div>` : ''}
         </div>
       </div>
@@ -305,6 +356,7 @@ function renderBuildingTable(trend) {
               <th class="px-4 py-2.5 text-left">新增廠棟</th>
               <th class="px-4 py-2.5 text-right">各棟新增面積</th>
               <th class="px-4 py-2.5 text-right">年度新增面積</th>
+              <th class="px-4 py-2.5 text-right">約當基準棟</th>
               <th class="px-4 py-2.5 text-right">累積面積</th>
             </tr>
           </thead>
@@ -312,6 +364,7 @@ function renderBuildingTable(trend) {
             ${rows.length ? rows.map((row) => {
               const annual = fmt(row.annual, metric);
               const cumulative = fmt(row.cumulative, metric);
+              const equivalent = getReferenceComparison(trend, 'production_area', row.annual).count;
               return `<tr class="bg-white dark:bg-slate-900 align-top">
                 <td class="px-4 py-3 font-black text-slate-700 dark:text-slate-200">${row.label}</td>
                 <td class="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">${row.buildings?.length ? row.buildings.map(escapeHtml).join('、') : '—'}</td>
@@ -322,9 +375,10 @@ function renderBuildingTable(trend) {
                   }).join('') : '—'}
                 </td>
                 <td class="px-4 py-3 text-right font-mono font-bold text-slate-700 dark:text-slate-200">${annual.val} ${annual.unit}</td>
+                <td class="px-4 py-3 text-right font-mono font-black text-indigo-600 dark:text-indigo-300">${equivalent !== null ? `${formatEquivalentBuildingCount(equivalent)} 棟 ${escapeHtml(selectedReferenceBuilding)}` : '—'}</td>
                 <td class="px-4 py-3 text-right font-mono font-black text-blue-700 dark:text-blue-300">${cumulative.val} ${cumulative.unit}</td>
               </tr>`;
-            }).join('') : '<tr><td colspan="5" class="px-4 py-8 text-center font-bold text-slate-400">目前沒有新增廠棟資料</td></tr>'}
+            }).join('') : '<tr><td colspan="6" class="px-4 py-8 text-center font-bold text-slate-400">目前沒有新增廠棟資料</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -398,10 +452,17 @@ async function openTrendOverlay() {
   const trend = await buildTrendData(); destroyCharts(); document.getElementById('trend-overlay-v2')?.remove();
   const productionArea = fmt(trend.metrics.production_area?.cumulative.at(-1) || 0, METRICS.production_area);
   const overlay = document.createElement('div'); overlay.id = 'trend-overlay-v2'; overlay.className = 'fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4';
-  overlay.innerHTML = `<section class="w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()"><div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4"><div><div class="flex items-center gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span><h2 class="text-xl font-black text-slate-800 dark:text-slate-100">成長趨勢</h2></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Y25 為現況基準；生產面積 = 無塵室面積 + 生產週邊面積；可匯出目前勾選的趨勢資料。</p></div><div class="flex flex-wrap items-center gap-2">${Object.values(METRICS).map(renderMetricButton).join('')}<div class="inline-flex overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">${renderAreaUnitButton('ping', '坪')}${renderAreaUnitButton('m2', 'm²')}</div><button id="trend-export-v2" class="px-3 py-2 rounded-xl text-sm font-black bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"><i data-lucide="download" class="inline-block w-4 h-4 mr-1"></i>匯出XLSX</button><button id="trend-close-v2" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button></div></div><div class="px-6 pt-4"><div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block"><div class="text-sm font-bold text-slate-500 dark:text-slate-300">生產面積合計</div><div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${productionArea.val}<span class="ml-1 text-sm text-slate-400">${productionArea.unit}</span></div><div class="mt-1 text-xs font-bold text-slate-400">無塵室面積 + 生產週邊面積</div></div></div><div class="px-6 py-4 space-y-3">${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個指標</div>'}${renderBuildingTable(trend)}${renderTables(trend)}</div></section>`;
+  overlay.innerHTML = `<section class="relative w-full max-w-7xl max-h-[92vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onclick="event.stopPropagation()"><div class="sticky top-0 z-10 flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-6 py-4 pr-16"><div><div class="flex items-center gap-2"><span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><i data-lucide="line-chart" class="w-5 h-5"></i></span><h2 class="text-xl font-black text-slate-800 dark:text-slate-100">成長趨勢</h2></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Y25 為現況基準；生產面積 = 無塵室面積 + 生產週邊面積；可匯出目前勾選的趨勢資料。</p></div><div class="flex flex-col gap-2 xl:items-end"><div class="flex flex-wrap items-center gap-2">${Object.values(METRICS).map(renderMetricButton).join('')}</div><div class="flex flex-wrap items-center gap-2"><div class="inline-flex overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">${renderAreaUnitButton('ping', '坪')}${renderAreaUnitButton('m2', 'm²')}</div><button id="trend-export-v2" class="px-3 py-2 rounded-xl text-sm font-black bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"><i data-lucide="download" class="inline-block w-4 h-4 mr-1"></i>匯出XLSX</button></div><button id="trend-close-v2" class="absolute right-4 top-4 z-20 rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button></div></div>${renderReferenceSelector(trend)}<div class="px-6 pt-4"><div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 inline-block"><div class="text-sm font-bold text-slate-500 dark:text-slate-300">生產面積合計</div><div class="mt-1 text-2xl font-black text-slate-800 dark:text-white">${productionArea.val}<span class="ml-1 text-sm text-slate-400">${productionArea.unit}</span></div><div class="mt-1 text-xs font-bold text-slate-400">無塵室面積 + 生產週邊面積</div></div></div><div class="px-6 py-4 space-y-3">${selected.length ? selected.map((key) => renderChartSection(METRICS[key], trend)).join('') : '<div class="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-400 font-bold">請至少選取一個指標</div>'}${renderBuildingTable(trend)}${renderTables(trend)}</div></section>`;
   overlay.addEventListener('click', closeTrendOverlay); document.body.appendChild(overlay);
   document.getElementById('trend-close-v2')?.addEventListener('click', closeTrendOverlay);
   document.getElementById('trend-export-v2')?.addEventListener('click', (event) => { event.stopPropagation(); exportSelectedTrends(trend); });
+  document.querySelectorAll('[data-trend-reference]').forEach((button) => button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const building = button.getAttribute('data-trend-reference');
+    if (!trend.referenceBuildings.includes(building) || building === selectedReferenceBuilding) return;
+    selectedReferenceBuilding = building;
+    await openTrendOverlay();
+  }));
   document.querySelectorAll('[data-trend-metric]').forEach((button) => button.addEventListener('click', async (event) => { event.stopPropagation(); const key = button.getAttribute('data-trend-metric'); selected = selected.includes(key) ? selected.filter((item) => item !== key) : [...selected, key]; await openTrendOverlay(); }));
   document.querySelectorAll('[data-trend-unit]').forEach((button) => button.addEventListener('click', async (event) => {
     event.stopPropagation();
@@ -489,13 +550,15 @@ function drawCharts(trend) {
             const addition = annual[index] || 0;
             if (addition <= 0) return;
 
+            const equivalent = index > 0 ? getReferenceComparison(trend, key, data.annual[index]).count : null;
             const lines = [
               `+${formatChartNumber(addition, metric)} ${unit}`,
-              `+${formatRate(data.rates[index])}`
+              `+${formatRate(data.rates[index])}`,
+              ...(equivalent !== null ? [`≈ ${formatEquivalentBuildingCount(equivalent)} 棟 ${selectedReferenceBuilding}`] : [])
             ];
             ctx.font = 'bold 10px sans-serif';
             const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 14;
-            const height = 34;
+            const height = lines.length * 14 + 6;
             const segmentTop = element.y;
             const segmentBottom = element.base;
             const segmentHeight = Math.abs(segmentBottom - segmentTop);
@@ -572,8 +635,10 @@ function drawCharts(trend) {
             callbacks: {
               label: (ctx) => {
                 if (isArea) {
+                  const equivalent = ctx.dataIndex > 0 ? getReferenceComparison(trend, key, data.annual[ctx.dataIndex]).count : null;
+                  const comparison = equivalent !== null ? `｜約 ${formatEquivalentBuildingCount(equivalent)} 棟 ${selectedReferenceBuilding}` : '';
                   return ctx.datasetIndex === 1
-                    ? `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}（${formatRate(data.rates[ctx.dataIndex])}）`
+                    ? `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}（${formatRate(data.rates[ctx.dataIndex])}）${comparison}`
                     : `${ctx.dataset.label}: ${formatChartNumber(ctx.parsed.y, metric)} ${unit}`;
                 }
                 return ctx.dataset.type === 'bar'
