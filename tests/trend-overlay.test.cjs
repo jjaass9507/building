@@ -8,7 +8,8 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'static/js/trend-overlay.js'), 'utf8')
   .replace("import { processRawData } from './data.js';", 'const processRawData = value => ({ processedData: value });')
-  .replace("import { formatArea, apiUrl } from './utils.js';", "const formatArea = value => ({ val: String(value), unit: 'm²' }); const apiUrl = value => value;");
+  .replace("import { formatArea, apiUrl } from './utils.js';", "const formatArea = value => ({ val: String(value), unit: 'm²' }); const apiUrl = value => value;")
+  .replace("import { configuredTrendReferences, formatEquivalentBuildingCount, getEquivalentBuildingCount } from './trend-reference.js?v=20260917-overlay-reference';", "const configuredTrendReferences = config => (config?.buildings || []).slice(0, 2); const formatEquivalentBuildingCount = value => Number(value).toFixed(2); const getEquivalentBuildingCount = (area, reference) => reference > 0 ? area / reference : null;");
 
 const context = vm.createContext({
   window: { addEventListener() {} },
@@ -66,4 +67,21 @@ test('master toggle expands and collapses all yearly details together', () => {
 test('addition amount and ratio text use right alignment', () => {
   assert.ok(source.includes("ctx.textAlign = 'right';"));
   assert.ok(source.includes('ctx.fillText(line, left + width - 7'));
+});
+
+test('active trend overlay loads and renders configured reference buildings', () => {
+  assert.ok(source.includes("apiUrl('/api/trend-reference')"));
+  assert.ok(source.includes('data-trend-reference'));
+  assert.ok(source.includes('面積比較基準'));
+});
+
+test('annual area chart and table expose equivalent building counts', () => {
+  assert.ok(source.includes('約等於'));
+  assert.ok(source.includes('約當基準棟'));
+  assert.ok(source.includes('formatEquivalentBuildingCount'));
+});
+
+test('close button stays anchored to the overlay top-right corner', () => {
+  assert.ok(source.includes('id="trend-close-v2" class="absolute right-4 top-4 z-20'));
+  assert.ok(source.includes('backdrop-blur px-6 py-4 pr-16'));
 });
