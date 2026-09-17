@@ -70,6 +70,7 @@ test('process analysis keeps building scope but ignores unfinished toggle', () =
 });
 
 test('chart uses stacked status datasets and fixed status colors', () => {
+    assert.match(source, /unfinished: '#7C8793'/);
     assert.match(source, /label: `已成廠 \(\$\{unitLabel\}\)`/);
     assert.match(source, /label: `未成廠 \(\$\{unitLabel\}\)`/);
     assert.match(source, /x: \{ stacked: true/);

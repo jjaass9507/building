@@ -6,7 +6,7 @@ const UNGROUPED_GROUP = '未分群';
 const PROCESS_SEPARATORS = /[、,，;；/／＋+＆&|\n\r]+/;
 const GROUP_COLORS = ['#0284C7', '#059669', '#7C3AED', '#EA580C', '#DB2777', '#0891B2', '#4F46E5', '#65A30D'];
 const SPECIAL_COLORS = { [MIXED_PROCESS]: '#D97706', [UNGROUPED_GROUP]: '#64748B' };
-const STATUS_COLORS = { established: '#0F8C88', unfinished: '#D97706' };
+const STATUS_COLORS = { established: '#0F8C88', unfinished: '#7C8793' };
 
 const escapeHtml = (value) => String(value ?? '')
     .replace(/&/g, '&amp;')
