@@ -25,6 +25,7 @@ const floorFacts = (floor) => `<span class="building-3d-facts"><span>樓高 <str
 
 const isSummaryFloor = (floor) => String(floor || '').trim().toUpperCase() === 'ALL';
 const isRaftFoundationFloor = (floor) => /筏\s*基|raft/i.test(String(floor ?? ''));
+const isRoofFloor = (floor) => /^(?:R\d*F|\d+RF)$/i.test(String(floor ?? '').replace(/\s+/g, ''));
 const compare3DFloors = (a, b) => {
     const aIsRaft = isRaftFoundationFloor(a.floor);
     const bIsRaft = isRaftFoundationFloor(b.floor);
