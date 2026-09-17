@@ -91,7 +91,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
         return `
             <div class="building-3d-floor ${selectedClass} ${plannedClass}" style="--floor-width:${width}px;--floor-depth:${depth}px;--floor-level:${level}px;--floor-order:${index}">
                 <button type="button" class="building-3d-volume" onclick="window.app.select3DFloor(decodeURIComponent('${encodedFloorId}'))" aria-label="查看 ${escapeHtml(floor.floor)} 樓層資訊">
-                    <span class="building-3d-top"><span class="building-3d-roof-line"></span></span>
+                    ${isRoofFloor(floor.floor) ? '' : '<span class="building-3d-top"><span class="building-3d-roof-line"></span></span>'}
                     <span class="building-3d-front" data-floor-face="${escapeHtml(floor.id)}">
                         <span class="building-3d-window-band"></span>
                         <span class="building-3d-face-info">
