@@ -2,5 +2,16 @@ Flask>=3.0.0
 pandas>=2.0.0
 openpyxl>=3.1.0
 Werkzeug>=3.0.0
-wfastcgi>=3.0.0
 ldap3>=2.9.1
+
+# WSGI server。IIS 的 HttpPlatformHandler 直接啟動 waitress-serve.exe，
+# 取代已停止維護的 wfastcgi。
+waitress>=3.0.0
+
+# PostgreSQL。psycopg[binary] 的 wheel 內含 libpq，
+# Windows 上不必另外安裝 PostgreSQL client，也不需要編譯。
+psycopg[binary]>=3.2.0
+psycopg-pool>=3.2.0
+
+# 讀取部署機的 .env（資料庫帳密等機密不進版控）
+python-dotenv>=1.0.0

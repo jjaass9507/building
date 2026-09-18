@@ -132,16 +132,16 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=12)
 
 class PrefixMiddleware:
     """
-    部署成 IIS 子應用程式 (例如掛在 /building_platform 底下) 時，wfastcgi 傳進來的
+    部署成 IIS 子應用程式 (例如掛在 /building_platform 底下) 時，IIS 轉進來的
     PATH_INFO 會保留應用程式前綴，SCRIPT_NAME 卻是空字串，導致 Flask 拿
     '/building_platform' 去比對只定義在 '/' 的路由，結果每一頁都是 404。
 
     這裡把前綴從 PATH_INFO 搬到 SCRIPT_NAME，Flask 才能正確比對路由，
     url_for() 產生的網址也才會帶上前綴 (static 檔案才不會 404)。
 
-    前綴由 APP_URL_PREFIX 指定；wfastcgi 會把 web.config 的 appSettings
-    放進環境變數，所以在 appSettings 加一行即可：
-        <add key="APP_URL_PREFIX" value="/building_platform" />
+    前綴由環境變數 APP_URL_PREFIX 指定。HttpPlatformHandler 是用
+    web.config 的 environmentVariables 區段傳環境變數，所以加一行即可：
+        <environmentVariable name="APP_URL_PREFIX" value="/building_platform" />
     沒設定時不做任何處理，部署在網站根目錄的環境不受影響。
     """
 
@@ -1331,7 +1331,7 @@ def upload_data_file():
 
 if __name__ == '__main__':
     # 本機開發沒有 IIS，也就沒有 Windows 驗證身分；給一個預設帳號才能進到畫面。
-    # 這段只有直接執行 app.py 時會生效，IIS (wfastcgi) 走的是 app.app，不會經過這裡。
+    # 這段只有直接執行 app.py 時會生效，IIS 走的是 wsgi:application，不會經過這裡。
     if not DEV_USER:
         DEV_USER = 'Local-Dev'
         print("本機模式：未設定 APP_DEV_USER，預設以 Local-Dev 身分登入。")

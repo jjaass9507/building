@@ -12,9 +12,14 @@ secret_key.txt
 uploads/
 processed/
 data_backups/
+utility_trend_backups/
 process_group_backups/
 trend_reference_backups/
 data_changes.json
+
+# IIS 部署產物（HttpPlatformHandler 的 stdout log 與離線安裝用的 wheel）
+logs/
+wheels/
 
 # office temp files
 ~$*.xlsx
