@@ -2,9 +2,9 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import app as app_module
+import store
 from building_data_manager import normalize_dataset
 from test_building_data_manager import SAMPLE_DATA
 
@@ -14,27 +14,15 @@ class BuildingDataRouteTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         self.data_path = os.path.join(self.folder.name, "data.json")
         self.audit_path = os.path.join(self.folder.name, "data_changes.json")
-        self.backup_path = os.path.join(self.folder.name, "backups")
-        self.processed_path = os.path.join(self.folder.name, "processed")
-        self.process_groups_path = os.path.join(self.folder.name, "process_groups.json")
-        self.process_group_backup_path = os.path.join(self.folder.name, "process_group_backups")
-        self.trend_reference_path = os.path.join(self.folder.name, "trend_reference.json")
-        self.trend_reference_backup_path = os.path.join(self.folder.name, "trend_reference_backups")
+        self.permissions_path = os.path.join(self.folder.name, "permissions.json")
         with open(self.data_path, "w", encoding="utf-8") as handle:
             json.dump(normalize_dataset(SAMPLE_DATA), handle, ensure_ascii=False)
+        with open(self.permissions_path, "w", encoding="utf-8") as handle:
+            json.dump({"admins": ["Local-Dev"], "users": [], "viewers": []}, handle)
 
-        self.patches = [
-            patch.object(app_module, "data_file_path", self.data_path),
-            patch.object(app_module, "data_changes_file_path", self.audit_path),
-            patch.object(app_module, "backup_dir", self.backup_path),
-            patch.object(app_module, "processed_dir", self.processed_path),
-            patch.object(app_module, "process_groups_file_path", self.process_groups_path),
-            patch.object(app_module, "process_group_backup_dir", self.process_group_backup_path),
-            patch.object(app_module, "trend_reference_file_path", self.trend_reference_path),
-            patch.object(app_module, "trend_reference_backup_dir", self.trend_reference_backup_path),
-        ]
-        for item in self.patches:
-            item.start()
+        # 所有檔案位置都由存取層決定，測試只要把它指到暫存目錄即可。
+        self._previous_base_dir = store.json_store.paths.base_dir
+        store.configure(self.folder.name)
 
         app_module.app.config.update(TESTING=True)
         self.client = app_module.app.test_client()
@@ -43,8 +31,7 @@ class BuildingDataRouteTests(unittest.TestCase):
             session["auth_type"] = "dev"
 
     def tearDown(self):
-        for item in reversed(self.patches):
-            item.stop()
+        store.configure(self._previous_base_dir)
         self.folder.cleanup()
 
     def test_admin_can_load_update_and_export(self):

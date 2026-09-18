@@ -316,10 +316,58 @@ UPDATE building.dataset_state
 {returning}
 """
 
-# PG 18 起 RETURNING 可以引用 OLD / NEW，所以「比對 revision（樂觀鎖）」與
-# 「取得異動前的 revision（寫稽核用）」一次往返就做完，不必先 SELECT ... FOR UPDATE。
-# 抽成常數是為了讓測試能在較舊的 PostgreSQL 上替換掉這一行。
+# PG 18 起 RETURNING 可以引用 OLD / NEW。
 _RETURNING_OLD_REVISION = "RETURNING OLD.revision AS revision_before"
+
+# RETURNING OLD 的最低版本（18.0）
+_MIN_RETURNING_OLD_VERSION = 180000
+
+
+def _claim_dataset_state(cur, *, new_revision, counts, username, expected_revision):
+    """取得版本列的鎖、檢查樂觀鎖並寫入新版本，回傳異動前的 revision。
+
+    這一步同時扮演三個角色：
+      1. 樂觀鎖：revision 對不上就是有人搶先改過 → RevisionConflict（對應 409）
+      2. 序列化：拿到這一列的 row lock 之後，後續寫入不可能與別人交錯，
+         所以整個存檔流程不需要額外的 advisory lock
+      3. 稽核：順手取得異動前的 revision
+
+    PG 18 可以用一條 UPDATE ... RETURNING OLD 一次做完；
+    更舊的版本沒有 RETURNING OLD，改成 SELECT ... FOR UPDATE 再 UPDATE。
+    兩者取得的是同一把 row lock，序列化效果相同，只差一次往返。
+    """
+    params = {
+        'revision': new_revision,
+        'buildings': counts.get('buildings', 0),
+        'floors': counts.get('floors', 0),
+        'username': username,
+    }
+
+    if cur.connection.info.server_version >= _MIN_RETURNING_OLD_VERSION:
+        if expected_revision is None:
+            guard = ''
+        else:
+            guard = 'AND revision = %(expected)s'
+            params['expected'] = expected_revision
+        cur.execute(
+            _UPDATE_STATE_SQL.format(revision_guard=guard, returning=_RETURNING_OLD_REVISION),
+            params,
+        )
+        row = cur.fetchone()
+        if row is None:
+            # 交易還沒結束，這裡讀到的就是搶先者已提交的值
+            cur.execute("SELECT revision FROM building.dataset_state WHERE id = 1")
+            found = cur.fetchone()
+            raise RevisionConflict(found[0] if found else '')
+        return row[0]
+
+    cur.execute("SELECT revision FROM building.dataset_state WHERE id = 1 FOR UPDATE")
+    row = cur.fetchone()
+    revision_before = row[0] if row else ''
+    if expected_revision is not None and revision_before != expected_revision:
+        raise RevisionConflict(revision_before)
+    cur.execute(_UPDATE_STATE_SQL.format(revision_guard='', returning=''), params)
+    return revision_before
 
 
 def save_current_data(
@@ -346,32 +394,14 @@ def save_current_data(
         # 延到 COMMIT 才檢查才正確。
         cur.execute("SET CONSTRAINTS ALL DEFERRED")
 
-        # 第一件事就是條件式 UPDATE 版本列：
-        #   * 影響 0 列 = 有人搶先改過 → 409
-        #   * 這一列的 row lock 同時序列化了後面所有寫入，不需要額外的 advisory lock
-        params = {
-            'revision': new_revision,
-            'buildings': counts.get('buildings', 0),
-            'floors': counts.get('floors', 0),
-            'username': username,
-        }
-        if expected_revision is None:
-            guard = ''
-        else:
-            guard = 'AND revision = %(expected)s'
-            params['expected'] = expected_revision
-        cur.execute(
-            _UPDATE_STATE_SQL.format(revision_guard=guard, returning=_RETURNING_OLD_REVISION),
-            params,
+        # 第一件事就是處理版本列：樂觀鎖、序列化與取得異動前的 revision 一次完成
+        revision_before = _claim_dataset_state(
+            cur,
+            new_revision=new_revision,
+            counts=counts,
+            username=username,
+            expected_revision=expected_revision,
         )
-
-        row = cur.fetchone()
-        if row is None:
-            # 交易還沒結束，這裡讀到的就是搶先者已提交的值
-            cur.execute("SELECT revision FROM building.dataset_state WHERE id = 1")
-            found = cur.fetchone()
-            raise RevisionConflict(found[0] if found else '')
-        revision_before = row[0]
 
         # 建物：先 upsert 再刪掉不在清單裡的（刪除會連帶 cascade 掉底下的樓層）
         cur.execute(_MERGE_BUILDINGS_SQL, {'payload': Jsonb(building_rows)})
@@ -645,15 +675,10 @@ def load_utility_trends() -> Dict[str, Any]:
                 }
                 for row in cur.fetchall()
             ]
-    result = {
-        'schema_version': meta.get('schema_version', '1.0'),
-        'updated_at': meta.get('updated_at'),
-        'updated_by': meta.get('updated_by'),
-        'description': meta.get('description', ''),
-        'metrics': metrics,
-    }
-    if meta.get('display_settings'):
-        result['display_settings'] = meta['display_settings']
+    # meta 存的就是寫入當下除了 metrics 以外的所有 top-level 欄位，
+    # 原樣放回去才能與檔案版逐鍵相同（例如來源沒有 description 就不該憑空補一個）。
+    result = dict(meta) if meta else {'schema_version': '1.0', 'updated_at': None, 'updated_by': None}
+    result['metrics'] = metrics
     return result
 
 
@@ -729,13 +754,9 @@ def write_utility_trends(data: Dict[str, Any], username: Optional[str] = None) -
                 {'payload': Jsonb(points)},
             )
 
-        _save_setting(cur, 'utility_trends_meta', {
-            'schema_version': data.get('schema_version', '1.0'),
-            'updated_at': data.get('updated_at'),
-            'updated_by': data.get('updated_by'),
-            'description': data.get('description', ''),
-            'display_settings': data.get('display_settings'),
-        }, username)
+        # metrics 已經存進關聯式表，其餘 top-level 欄位原樣留存，讀回來才不會走樣
+        _save_setting(cur, 'utility_trends_meta',
+                      {k: v for k, v in data.items() if k != 'metrics'}, username)
 
 
 # =============================================================================

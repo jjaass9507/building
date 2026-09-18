@@ -76,8 +76,10 @@ building/
 │   ├── 001_init.sql           # building schema：主表、稽核、權限、存取紀錄
 │   ├── 002_views.sql          # building_api schema：對外 view 層
 │   └── 003_roles_grants.sql   # 角色與授權（需要 CREATEROLE，通常由 DBA 執行）
-├── store/
-│   └── pg_store.py            # PostgreSQL 版資料存取（回傳結構與 JSON 檔完全相同）
+├── store/                     # 資料存取層，app.py 只透過這裡讀寫
+│   ├── __init__.py            # 門面：依 DATA_BACKEND 分派，並處理雙寫
+│   ├── json_store.py          # 地端 JSON 檔案
+│   └── pg_store.py            # PostgreSQL（回傳結構與 JSON 檔完全相同）
 ├── scripts/
 │   ├── deploy-iis.ps1         # IIS 部署（HttpPlatformHandler + Waitress）
 │   ├── run-migrations.ps1     # 套用 schema、匯入資料與 hash 驗收
@@ -577,10 +579,30 @@ http://127.0.0.1:5020
 | 值 | 資料來源 |
 |---|---|
 | `json`（預設） | 地端 JSON 檔案，行為與導入資料庫前完全相同 |
-| `postgres` | PostgreSQL 18 |
+| `postgres` | PostgreSQL 18；寫入同時鏡射回 JSON 檔 |
 
-目前程式仍走 `json`。資料庫這條路已經完成 schema、存取層與匯入驗收工具，
-確認驗收通過後才會把讀寫切過去。
+所有檔案讀寫都集中在 `store/` 這一層：
+
+```text
+store/
+├── __init__.py     門面：依 DATA_BACKEND 分派讀取、處理雙寫
+├── json_store.py   地端 JSON 檔案
+└── pg_store.py     PostgreSQL
+```
+
+`app.py` 只呼叫 `store.*`，不再直接碰檔案，所以切換資料來源不需要改路由。
+
+### 雙寫與退路
+
+`postgres` 模式下，寫入會先進資料庫（資料、版本快照與稽核紀錄在**同一個交易**內
+完成），成功後再把同一份資料鏡射回 JSON 檔。
+
+這樣做是為了保留退路：切換期間若資料庫出狀況，把 `DATA_BACKEND` 改回 `json`
+重啟就能回到檔案版，而且檔案內容是最新的。確認穩定後把 `DATA_MIRROR_JSON`
+設成 `false` 即可停掉鏡射。
+
+鏡射失敗**不會**讓使用者的請求失敗 —— 此時資料庫已經是真實來源，檔案只是備援。
+失敗會記進 log，並在 API 回應的 `warnings` 帶一則訊息讓維運人員看得到。
 
 ### 資料表設計重點
 
@@ -672,11 +694,27 @@ hash 相同就代表沒有任何欄位在搬運途中走樣，不需要另外寫
 驗收全部 PASS 之後：
 
 ```powershell
-# 1. 把 .env 的 DATA_BACKEND 改成 postgres
+# 1. 把 .env 的 DATA_BACKEND 改成 postgres（DATA_MIRROR_JSON 先維持 true）
 # 2. 重啟網站
 Restart-WebAppPool -Name "Pool-BuildingPlatform"
 # 3. 確認
 .\scripts\check-deployment.ps1 -SiteName BuildingPlatform
+```
+
+要退回檔案版的話，把 `DATA_BACKEND` 改回 `json` 再重啟即可 ——
+鏡射開著的期間 JSON 檔一直是最新的。
+
+### 一致性測試
+
+`tests/test_backend_parity.py` 會把同一串操作（讀取、資料維護、樂觀鎖衝突、
+製程分群、需求趨勢、Excel 匯出）分別跑在兩種 backend 上，逐一比對 API 回應，
+並確認鏡射回 JSON 的內容與純檔案模式完全相同。
+
+沒有設定資料庫連線時會自動 skip；要實際跑：
+
+```bash
+PGHOST=... PGPORT=... PGDATABASE=... PGUSER=... PGPASSWORD=... \
+    python -m pytest tests/test_backend_parity.py -v
 ```
 
 ### migration 規範
