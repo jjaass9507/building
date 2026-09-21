@@ -751,6 +751,45 @@ Windows 驗證設定，最後直接起一次 Waitress 做冒煙測試。可重�
 | `-RecreateVenv` | 先刪除既有 venv 再重建（部署目錄搬動過就必須用） |
 | `-SkipSite` | 只更新程式與套件，不動 IIS 站台（日常更新版本） |
 | `-SkipFeatures` | 略過 IIS 角色/功能安裝 |
+| `-SeedFrom` | 從既有部署複製一份資料檔過來（平行部署用，不修改來源） |
+| `-ReplaceExistingSite` | 允許接管已存在且指向其他目錄的 IIS 網站 |
+| `-FullIisReset` | 結束時執行 `iisreset`（預設只重啟本次的應用程式集區） |
+
+### 平行部署（不動既有站台）
+
+新版要先跟舊版並存驗證時，用**不同的目錄、網站名稱與連接埠**部署一套：
+
+```powershell
+# 1. 把新版程式放到另一個目錄（不要覆蓋既有部署）
+#    例如 git clone 或直接複製一份到 D:\WebServices\BuildingPlatform-v2
+
+# 2. 平行部署，並帶一份既有資料過來驗證
+.\scripts\deploy-iis.ps1 `
+    -AppRoot  "D:\WebServices\BuildingPlatform-v2" `
+    -SiteName "BuildingPlatform-v2" `
+    -Port     8002 `
+    -SeedFrom "D:\WebServices\BuildingPlatform"
+```
+
+腳本針對平行部署有三道保護：
+
+- **網站名稱撞到既有站台**（且指向不同目錄）→ 直接中止，不會把既有站台接管過來。
+  確實要接管才加 `-ReplaceExistingSite`。
+- **連接埠已被其他站台佔用** → 直接中止並提示換一個。
+- **應用程式集區正被其他站台使用** → 直接中止；兩個站台共用集區會共享 Python 程序。
+
+另外預設**不執行 `iisreset`**（那會重啟整台機器的所有站台），
+只重啟本次部署的應用程式集區。第一次安裝 HttpPlatformHandler 時才需要
+另外跑一次 `iisreset`。
+
+平行部署後要知道的幾件事：
+
+| 項目 | 說明 |
+|---|---|
+| 資料 | `-SeedFrom` 是**複製**不是共用。部署後兩邊各走各的，舊站台的新異動不會同步過來 |
+| 登入 | 兩個站台各有自己的 `secret_key.txt`，session 互相獨立 |
+| 舊站台 | 完全不受影響，仍走原本的 wfastcgi `web.config` |
+| 驗收完成後 | 把流量切到新站台（改繫結或前端入口），確認無誤再移除舊站台 |
 
 ### 前置需求
 

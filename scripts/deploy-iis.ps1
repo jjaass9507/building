@@ -53,11 +53,36 @@
 .PARAMETER SkipSite
     只更新程式與 venv，不動 IIS 站台設定（日常更新版本時用）。
 
+.PARAMETER SeedFrom
+    從既有部署目錄複製一份資料檔（data.json、permissions.json、process_groups.json、
+    trend_reference.json、utility_trends.json、data_changes.json）到新的部署目錄，
+    讓平行部署的站台有真實資料可以驗證。
+
+    是「複製」不是「共用」：來源目錄完全不會被修改，新站台之後怎麼改也動不到它。
+    部署目錄已經有同名檔案時會保留現有的，不覆蓋。
+
+.PARAMETER ReplaceExistingSite
+    允許把「已存在且指向其他目錄」的 IIS 網站改指到這次的部署目錄。
+    不加這個參數時，遇到這種情況腳本會直接中止，避免誤蓋掉線上服務。
+
+.PARAMETER FullIisReset
+    結束時執行 iisreset（整台機器的所有站台都會短暫中斷）。
+    預設只重啟本次部署的應用程式集區，不影響其他站台。
+    剛安裝完 HttpPlatformHandler 時才需要加這個參數。
+
 .EXAMPLE
     .\scripts\deploy-iis.ps1
 
 .EXAMPLE
     .\scripts\deploy-iis.ps1 -AppRoot "D:\WebServices\BuildingPlatform" -Port 8001 -Offline
+
+.EXAMPLE
+    # 平行部署：新站台與既有站台並存，用既有站台的資料做驗證
+    .\scripts\deploy-iis.ps1 ``
+        -AppRoot  "D:\WebServices\BuildingPlatform-v2" ``
+        -SiteName "BuildingPlatform-v2" ``
+        -Port     8002 ``
+        -SeedFrom "D:\WebServices\BuildingPlatform"
 
 .EXAMPLE
     # 只更新程式碼與套件，不動 IIS 設定
@@ -71,10 +96,13 @@ param(
     [string]$AppPoolName,
     [int]$Port = 8001,
     [string]$PythonExe,
+    [string]$SeedFrom,
     [switch]$Offline,
     [switch]$RecreateVenv,
     [switch]$SkipFeatures,
-    [switch]$SkipSite
+    [switch]$SkipSite,
+    [switch]$ReplaceExistingSite,
+    [switch]$FullIisReset
 )
 
 $ErrorActionPreference = 'Stop'
@@ -141,6 +169,7 @@ Write-Host "  網站名稱  : $SiteName"
 Write-Host "  應用程式池: $AppPoolName"
 Write-Host "  連接埠    : $Port"
 Write-Host "  套件來源  : $(if ($Offline) { 'wheels\（離線）' } else { 'PyPI（連網）' })"
+if ($SeedFrom) { Write-Host "  資料來源  : $SeedFrom（複製，不修改來源）" }
 
 # ---------------------------------------------------------------------------
 Write-Step '檢查執行環境'
@@ -315,6 +344,36 @@ foreach ($dir in $runtimeDirs) {
     }
 }
 
+if ($SeedFrom) {
+    # 平行部署時，新站台預設是空的。從既有部署複製一份資料過來才有東西可以驗，
+    # 而且是「複製」不是「共用」——新站台之後怎麼改都動不到既有站台的檔案。
+    $seedRoot = (Resolve-Path $SeedFrom -ErrorAction SilentlyContinue)
+    if (-not $seedRoot) { Stop-Deploy "-SeedFrom 指定的目錄不存在：$SeedFrom" }
+    $seedRoot = $seedRoot.Path
+    if ($seedRoot.TrimEnd('\') -eq $AppRoot.TrimEnd('\')) {
+        Stop-Deploy "-SeedFrom 不能與部署目錄相同。"
+    }
+
+    $seedFiles = @('data.json', 'permissions.json', 'process_groups.json',
+                   'trend_reference.json', 'utility_trends.json', 'data_changes.json')
+    foreach ($name in $seedFiles) {
+        $source = Join-Path $seedRoot $name
+        $target = Join-Path $AppRoot $name
+        if (-not (Test-Path $source)) {
+            Write-Info "$name 在來源不存在，略過"
+            continue
+        }
+        if (Test-Path $target) {
+            # 不覆蓋新站台已經有的資料，避免重跑部署把驗測中的內容清掉
+            Write-Warn "$name 已存在於部署目錄，保留現有檔案（未從來源覆蓋）"
+            continue
+        }
+        Copy-Item $source $target
+        Write-Ok "已從來源複製 $name"
+    }
+    Write-Info "來源目錄的檔案完全沒有被修改：$seedRoot"
+}
+
 if (-not (Test-Path (Join-Path $AppRoot '.env'))) {
     Write-Warn @"
 找不到 .env。資料庫連線設定（含密碼）放在這個檔案，不進版控。
@@ -367,6 +426,37 @@ if ($SkipSite) {
 } else {
     Import-Module WebAdministration -ErrorAction Stop
 
+    # 先檢查連接埠有沒有被別的站台佔走。平行部署時最常見的錯誤就是沿用了
+    # 既有站台的 port，兩個站台同時繫結會讓其中一個起不來。
+    $portOwner = Get-Website | Where-Object {
+        $_.Name -ne $SiteName -and
+        ($_.bindings.Collection | Where-Object { $_.bindingInformation -match ":$Port`:" })
+    } | Select-Object -First 1
+    if ($portOwner) {
+        Stop-Deploy @"
+連接埠 $Port 已經被網站「$($portOwner.Name)」使用（目錄：$($portOwner.physicalPath)）。
+
+平行部署請換一個沒有被佔用的連接埠，例如：
+
+    .\scripts\deploy-iis.ps1 -AppRoot "$AppRoot" -SiteName "$SiteName" -Port 8002
+"@
+    }
+
+    # 應用程式集區若正被別的站台使用，共用會讓兩邊共享同一個 Python 程序與回收設定
+    $poolOwner = Get-Website | Where-Object {
+        $_.Name -ne $SiteName -and $_.applicationPool -eq $AppPoolName
+    } | Select-Object -First 1
+    if ($poolOwner -and -not $ReplaceExistingSite) {
+        Stop-Deploy @"
+應用程式集區「$AppPoolName」正被網站「$($poolOwner.Name)」使用。
+
+兩個站台共用同一個集區會共享 Python 程序與回收設定，平行部署請分開，例如：
+
+    .\scripts\deploy-iis.ps1 -AppRoot "$AppRoot" ``
+        -SiteName "$SiteName" -AppPoolName "Pool-$SiteName" -Port $Port
+"@
+    }
+
     if (Test-Path "IIS:\AppPools\$AppPoolName") {
         Write-Info "應用程式集區 $AppPoolName 已存在，更新設定"
     } else {
@@ -381,6 +471,26 @@ if ($SkipSite) {
 
     $site = Get-Website -Name $SiteName -ErrorAction SilentlyContinue
     if ($site) {
+        $existingPath = $site.physicalPath
+        if ($existingPath -and $existingPath.TrimEnd('\') -ne $AppRoot.TrimEnd('\') -and -not $ReplaceExistingSite) {
+            # 這是平行部署最容易出事的地方：站台名稱撞到既有站台時，
+            # 若直接改 physicalPath，原本在線上的站台就被接管了。
+            Stop-Deploy @"
+網站「$SiteName」已經存在，而且指向不同的目錄：
+
+    既有站台目錄 : $existingPath
+    這次要部署到 : $AppRoot
+
+繼續下去會把既有站台接管到新目錄，原本的服務等於被蓋掉。
+
+要平行部署（不影響既有站台），請改用不同的網站名稱與連接埠，例如：
+
+    .\scripts\deploy-iis.ps1 -AppRoot "$AppRoot" ``
+        -SiteName "$SiteName-v2" -Port 8002
+
+確實要讓既有站台改指到新目錄，才加上 -ReplaceExistingSite。
+"@
+        }
         Write-Info "網站 $SiteName 已存在，更新實體路徑與應用程式集區"
         Set-ItemProperty "IIS:\Sites\$SiteName" physicalPath $AppRoot
         Set-ItemProperty "IIS:\Sites\$SiteName" applicationPool $AppPoolName
@@ -461,10 +571,16 @@ Write-Step '冒煙測試'
 
 # 先在命令列直接起一次 Waitress。這一步失敗的話，通常是 import 錯誤或套件缺失，
 # 比起等 IIS 回 502 再去翻 log，在這裡就會直接把 traceback 印出來。
-Write-Info '以 venv 的 Waitress 啟動測試（port 9099，5 秒後自動結束）…'
+# 取一個當下沒被使用的 port，避免與既有站台或另一個同時進行的部署撞在一起
+$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$listener.Start()
+$smokePort = $listener.LocalEndpoint.Port
+$listener.Stop()
+
+Write-Info "以 venv 的 Waitress 啟動測試（port $smokePort，5 秒後自動結束）…"
 $smokeOut = Join-Path $env:TEMP "building-smoke-$PID.log"
 $process = Start-Process -FilePath $venvPython `
-    -ArgumentList '-m', 'waitress', '--port=9099', 'wsgi:application' `
+    -ArgumentList '-m', 'waitress', "--port=$smokePort", 'wsgi:application' `
     -WorkingDirectory $AppRoot -PassThru -NoNewWindow `
     -RedirectStandardError $smokeOut -RedirectStandardOutput "$smokeOut.out"
 
@@ -483,9 +599,18 @@ Write-Ok 'Waitress 可正常啟動'
 Write-Step '完成'
 
 if (-not $SkipSite) {
-    Write-Info '重新啟動 IIS …'
-    iisreset /restart | Out-Null
-    Write-Ok 'IIS 已重新啟動'
+    if ($FullIisReset) {
+        # iisreset 會重啟整台機器上的所有站台。平行部署時這代表既有服務也會斷線，
+        # 所以預設不做，只在剛裝完 HttpPlatformHandler 之類非做不可的情況才加這個參數。
+        Write-Warn '執行 iisreset：這台機器上的所有 IIS 站台都會短暫中斷。'
+        iisreset /restart | Out-Null
+        Write-Ok 'IIS 已重新啟動'
+    } else {
+        Write-Info "重新啟動應用程式集區 $AppPoolName（不影響其他站台）…"
+        Restart-WebAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
+        Write-Ok "$AppPoolName 已重新啟動"
+        Write-Info '若這台機器是第一次安裝 HttpPlatformHandler，請另外執行一次 iisreset。'
+    }
 }
 
 Write-Host ''
@@ -499,5 +624,14 @@ Write-Host '  接 PostgreSQL 的後續步驟：' -ForegroundColor Yellow
 Write-Host '    1. Copy-Item .env.example .env   並填入連線資訊'
 Write-Host '    2. .\scripts\run-migrations.ps1                建立 schema'
 Write-Host '    3. .\scripts\run-migrations.ps1 -MigrateData   匯入資料並驗收 hash'
-Write-Host '    4. 驗收通過後，把 .env 的 DATA_BACKEND 改成 postgres 再重啟網站'
+Write-Host "    4. 驗收通過後，把 .env 的 DATA_BACKEND 改成 postgres，再執行："
+Write-Host "       Restart-WebAppPool -Name `"$AppPoolName`"" -ForegroundColor White
 Write-Host ''
+
+if ($SeedFrom) {
+    Write-Host '  平行部署提醒：' -ForegroundColor Yellow
+    Write-Host "    * 這個站台的資料是 $SeedFrom 在部署當下的複本，"
+    Write-Host '      之後兩邊各走各的，來源那邊的新異動不會同步過來。'
+    Write-Host '    * 兩個站台的登入 session 互相獨立（各自的 secret_key.txt）。'
+    Write-Host ''
+}
