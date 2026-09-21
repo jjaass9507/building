@@ -21,6 +21,10 @@
     腳本本身是可重複執行的：已存在的 venv / AppPool / 網站會沿用並更新設定，
     不會重建。要強制重建 venv 請加 -RecreateVenv。
 
+    === 沒有測試機時請先預演 ===
+    加上 -WhatIfOnly 會只做唯讀檢查（步驟 1、3、4 與名稱／連接埠衝突），
+    印出「將會做哪些變更」後就結束，完全不動任何設定或檔案。
+
     === 這個腳本不會做的事 ===
       * 不會建立或修改 .env（資料庫帳密請部署人員手動填，見 .env.example）
       * 不會跑資料庫 migration（請另外執行 scripts\run-migrations.ps1）
@@ -79,6 +83,21 @@
     預設只重啟本次部署的應用程式集區，不影響其他站台。
     剛安裝完 HttpPlatformHandler 時才需要加這個參數。
 
+.PARAMETER WhatIfOnly
+    預演：只做唯讀檢查（權限、IIS 功能、HttpPlatformHandler、Python、
+    名稱與連接埠衝突），印出「將會做哪些變更」之後就結束，
+    不安裝任何東西、不建立 venv、不碰 IIS 設定、不寫任何檔案。
+
+    沒有測試機、只能在正式機上部署時，請務必先用這個模式跑一次。
+
+.EXAMPLE
+    # 預演：只檢查不變更，正式機第一次執行前務必先跑這個
+    .\scripts\deploy-iis.ps1 ``
+        -AppRoot    "D:\WebServices\BuildingPlatform-v2" ``
+        -ParentSite "Default Web Site" ``
+        -AppPath    "building_platform_v2" ``
+        -WhatIfOnly
+
 .EXAMPLE
     .\scripts\deploy-iis.ps1
 
@@ -123,7 +142,8 @@ param(
     [switch]$SkipFeatures,
     [switch]$SkipSite,
     [switch]$ReplaceExistingSite,
-    [switch]$FullIisReset
+    [switch]$FullIisReset,
+    [switch]$WhatIfOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -188,6 +208,11 @@ if ($asApplication) {
 # 掛在網站根目錄時前綴留空；掛成子應用程式時必須填，否則每一頁都是 404
 $urlPrefix = if ($asApplication) { $AppPath } else { '' }
 
+# logs 是 HttpPlatformHandler 寫 stdout 用；其餘是程式執行期需要寫入的資料夾。
+# 定義在這裡是因為預演模式也要用到。
+$runtimeDirs = @('logs', 'uploads', 'processed', 'data_backups',
+                 'utility_trend_backups', 'process_group_backups', 'trend_reference_backups')
+
 $venvDir    = Join-Path $AppRoot 'venv'
 $venvPython = Join-Path $venvDir 'Scripts\python.exe'
 $venvPip    = Join-Path $venvDir 'Scripts\pip.exe'
@@ -230,6 +255,8 @@ if ($AppRoot.Contains(' ')) {
 # ---------------------------------------------------------------------------
 Write-Step 'IIS 角色與功能'
 
+$script:MissingFeatures = @()
+
 if ($SkipSite -or $SkipFeatures) {
     Write-Info '已指定略過，跳過 IIS 功能安裝。'
 } elseif (Get-Command Install-WindowsFeature -ErrorAction SilentlyContinue) {
@@ -241,8 +268,12 @@ if ($SkipSite -or $SkipFeatures) {
             Write-Warn "找不到功能 $feature，請自行確認。"
         } elseif ($state.Installed) {
             Write-Ok "$feature 已安裝"
+        } elseif ($WhatIfOnly) {
+            $script:MissingFeatures += $feature
+            Write-Warn "$feature 尚未安裝（預演模式不會安裝）"
         } else {
-            Write-Info "安裝 $feature …"
+            # 安裝 IIS 功能可能連帶重啟 W3SVC，正式機請安排在維護時段
+            Write-Warn "安裝 $feature：這可能會短暫重啟 IIS，影響這台機器上的其他站台。"
             Install-WindowsFeature -Name $feature -IncludeManagementTools | Out-Null
             Write-Ok "$feature 安裝完成"
         }
@@ -324,6 +355,106 @@ Python 程序會永遠起不來（IIS 回 502）。
 
 $PythonExe = Find-Python -Explicit $PythonExe
 
+# ---------------------------------------------------------------------------
+# 預演模式：到這裡為止全都是唯讀檢查。把 IIS 端的衝突也一併查完，
+# 印出「將會做哪些變更」就結束，不動任何東西。
+# 沒有測試機、只能在正式機上部署時，這是唯一能事先確認的機會。
+# ---------------------------------------------------------------------------
+if ($WhatIfOnly) {
+    Write-Step '預演：IIS 現況檢查'
+
+    $conflicts = @()
+    if (-not $SkipSite) {
+        Import-Module WebAdministration -ErrorAction Stop
+
+        if ($asApplication) {
+            if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
+                $conflicts += "找不到父網站「$ParentSite」"
+            } else {
+                Write-Ok "父網站存在：$ParentSite"
+                $existing = Get-WebApplication -Site $ParentSite -Name $AppPath.TrimStart('/') -ErrorAction SilentlyContinue
+                if ($existing) {
+                    if ($existing.physicalPath.TrimEnd('\') -ne $AppRoot.TrimEnd('\')) {
+                        $conflicts += "應用程式 $ParentSite$AppPath 已存在且指向 $($existing.physicalPath)（會被接管）"
+                    } else {
+                        Write-Ok "應用程式 $ParentSite$AppPath 已指向本次目錄，會更新設定"
+                    }
+                } else {
+                    Write-Ok "應用程式 $ParentSite$AppPath 不存在，會新建"
+                }
+            }
+        } else {
+            $portOwner = Get-Website | Where-Object {
+                $_.Name -ne $SiteName -and
+                ($_.bindings.Collection | Where-Object { $_.bindingInformation -match ":$Port`:" })
+            } | Select-Object -First 1
+            if ($portOwner) { $conflicts += "連接埠 $Port 已被網站「$($portOwner.Name)」使用" }
+            else { Write-Ok "連接埠 $Port 未被佔用" }
+
+            $site = Get-Website -Name $SiteName -ErrorAction SilentlyContinue
+            if ($site -and $site.physicalPath.TrimEnd('\') -ne $AppRoot.TrimEnd('\')) {
+                $conflicts += "網站「$SiteName」已存在且指向 $($site.physicalPath)（會被接管）"
+            }
+        }
+
+        $poolExists = Test-Path "IIS:\AppPools\$AppPoolName"
+        $poolOwner = @(Get-Website | Where-Object {
+            $_.Name -ne $SiteName -and $_.applicationPool -eq $AppPoolName
+        }) + @(Get-WebApplication | Where-Object {
+            $_.applicationPool -eq $AppPoolName -and
+            -not ($asApplication -and $_.path -eq $AppPath)
+        }) | Select-Object -First 1
+        if ($poolOwner) {
+            $ownerName = if ($poolOwner.Name) { $poolOwner.Name } else { $poolOwner.path }
+            $conflicts += "應用程式集區「$AppPoolName」已被「$ownerName」使用"
+        } elseif ($poolExists) {
+            Write-Ok "應用程式集區 $AppPoolName 已存在且沒有別人在用，會更新設定"
+        } else {
+            Write-Ok "應用程式集區 $AppPoolName 不存在，會新建"
+        }
+    }
+
+    Write-Step '預演：將會做的變更'
+
+    if ($script:MissingFeatures.Count -gt 0) {
+        Write-Warn "安裝 IIS 功能：$($script:MissingFeatures -join '、')"
+        Write-Warn "  ↑ 這一步可能短暫重啟 IIS，會影響這台機器上的其他站台，請安排維護時段"
+    } else {
+        Write-Info 'IIS 功能：都已安裝，不需要變更'
+    }
+    Write-Info "建立 venv 並安裝套件：$venvDir"
+    Write-Info "建立執行期資料夾：$($runtimeDirs -join '、')"
+    if ($SeedFrom) { Write-Info "從 $SeedFrom 複製資料檔（來源不會被修改）" }
+    Write-Info "改寫 web.config 路徑，APP_URL_PREFIX = $(if ($urlPrefix) { $urlPrefix } else { '（空）' })"
+    if (-not $SkipSite) {
+        if ($asApplication) {
+            Write-Info "建立／更新子應用程式 $ParentSite$AppPath -> $AppRoot"
+        } else {
+            Write-Info "建立／更新網站 $SiteName（Port $Port）-> $AppRoot"
+        }
+        Write-Info "設定目錄權限給 IIS AppPool\$AppPoolName"
+        Write-Info "呼叫 setup-ad-login.ps1 設定 Windows 驗證"
+        Write-Info "重新啟動應用程式集區 $AppPoolName（不影響其他站台）"
+    }
+    Write-Info '最後以 Waitress 做一次冒煙測試'
+
+    Write-Host ''
+    if ($conflicts.Count -gt 0) {
+        Write-Fail '偵測到衝突，實際執行時會被擋下來：'
+        $conflicts | ForEach-Object { Write-Host "         - $_" -ForegroundColor Red }
+        Write-Host ''
+        Write-Host '請先處理上述問題，或改用不同的名稱／路徑／連接埠。' -ForegroundColor Yellow
+        Write-Host ''
+        exit 1
+    }
+
+    Write-Ok '沒有偵測到衝突。拿掉 -WhatIfOnly 即可實際部署。'
+    Write-Host ''
+    Write-Host '  注意：以上是預演，完全沒有變更任何設定或檔案。' -ForegroundColor Yellow
+    Write-Host ''
+    exit 0
+}
+
 if ($RecreateVenv -and (Test-Path $venvDir)) {
     Write-Info '移除既有 venv …'
     Remove-Item -Recurse -Force $venvDir
@@ -371,9 +502,6 @@ Write-Ok "waitress-serve.exe 就緒：$waitressExe"
 # ---------------------------------------------------------------------------
 Write-Step '執行期資料夾'
 
-# logs 是 HttpPlatformHandler 寫 stdout 用；其餘是程式執行期需要寫入的資料夾。
-$runtimeDirs = @('logs', 'uploads', 'processed', 'data_backups',
-                 'utility_trend_backups', 'process_group_backups', 'trend_reference_backups')
 foreach ($dir in $runtimeDirs) {
     $full = Join-Path $AppRoot $dir
     if (-not (Test-Path $full)) {
