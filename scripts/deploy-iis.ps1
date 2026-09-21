@@ -36,7 +36,16 @@
     應用程式集區名稱，預設為 "Pool-<SiteName>"。
 
 .PARAMETER Port
-    IIS 網站繫結的連接埠，預設 8001。
+    IIS 網站繫結的連接埠，預設 8001。只有在建立獨立網站時才用得到。
+
+.PARAMETER ParentSite
+    要把本專案掛成「子應用程式」時，指定父網站名稱（例如 "Default Web Site"）。
+    與 -AppPath 一起使用。指定後就不會建立獨立網站，-Port 會被忽略。
+
+.PARAMETER AppPath
+    子應用程式的路徑（例如 "building_platform"，網址會是 http://主機/building_platform）。
+    指定後腳本會自動把 web.config 的 APP_URL_PREFIX 填成 "/building_platform"，
+    並用這個路徑設定 Windows 驗證。
 
 .PARAMETER PythonExe
     指定要用哪一個 python.exe 建立 venv。不指定時自動尋找。
@@ -77,12 +86,22 @@
     .\scripts\deploy-iis.ps1 -AppRoot "D:\WebServices\BuildingPlatform" -Port 8001 -Offline
 
 .EXAMPLE
-    # 平行部署：新站台與既有站台並存，用既有站台的資料做驗證
+    # 平行部署（獨立網站）：新站台與既有站台並存，用既有站台的資料做驗證
     .\scripts\deploy-iis.ps1 ``
         -AppRoot  "D:\WebServices\BuildingPlatform-v2" ``
         -SiteName "BuildingPlatform-v2" ``
         -Port     8002 ``
         -SeedFrom "D:\WebServices\BuildingPlatform"
+
+.EXAMPLE
+    # 平行部署（子應用程式）：線上是 /building_platform，先在 /building_platform_v2 驗
+    .\scripts\deploy-iis.ps1 ``
+        -AppRoot    "D:\WebServices\BuildingPlatform-v2" ``
+        -ParentSite "Default Web Site" ``
+        -AppPath    "building_platform_v2" ``
+        -SeedFrom   "D:\WebServices\BuildingPlatform"
+
+    # 驗完之後用 switch-site.ps1 正式切換到 /building_platform
 
 .EXAMPLE
     # 只更新程式碼與套件，不動 IIS 設定
@@ -95,6 +114,8 @@ param(
     [string]$SiteName = 'BuildingPlatform',
     [string]$AppPoolName,
     [int]$Port = 8001,
+    [string]$ParentSite,
+    [string]$AppPath,
     [string]$PythonExe,
     [string]$SeedFrom,
     [switch]$Offline,
@@ -155,6 +176,18 @@ if (-not (Test-Path (Join-Path $AppRoot 'app.py'))) {
 }
 if ([string]::IsNullOrWhiteSpace($AppPoolName)) { $AppPoolName = "Pool-$SiteName" }
 
+# 子應用程式模式：-ParentSite 與 -AppPath 必須成對出現
+$asApplication = -not [string]::IsNullOrWhiteSpace($ParentSite) -or -not [string]::IsNullOrWhiteSpace($AppPath)
+if ($asApplication) {
+    if ([string]::IsNullOrWhiteSpace($ParentSite) -or [string]::IsNullOrWhiteSpace($AppPath)) {
+        Stop-Deploy "-ParentSite 與 -AppPath 必須一起指定。"
+    }
+    $AppPath = '/' + $AppPath.Trim('/')
+    if ($AppPath -eq '/') { Stop-Deploy "-AppPath 不能是根路徑，請指定實際的應用程式路徑。" }
+}
+# 掛在網站根目錄時前綴留空；掛成子應用程式時必須填，否則每一頁都是 404
+$urlPrefix = if ($asApplication) { $AppPath } else { '' }
+
 $venvDir    = Join-Path $AppRoot 'venv'
 $venvPython = Join-Path $venvDir 'Scripts\python.exe'
 $venvPip    = Join-Path $venvDir 'Scripts\pip.exe'
@@ -165,9 +198,16 @@ $webConfig  = Join-Path $AppRoot 'web.config'
 Write-Host ''
 Write-Host '建物管理平台 - IIS 部署' -ForegroundColor White
 Write-Host "  部署目錄  : $AppRoot"
-Write-Host "  網站名稱  : $SiteName"
+if ($asApplication) {
+    Write-Host "  掛載方式  : 子應用程式"
+    Write-Host "  父網站    : $ParentSite"
+    Write-Host "  應用程式  : $AppPath"
+} else {
+    Write-Host "  掛載方式  : 獨立網站"
+    Write-Host "  網站名稱  : $SiteName"
+    Write-Host "  連接埠    : $Port"
+}
 Write-Host "  應用程式池: $AppPoolName"
-Write-Host "  連接埠    : $Port"
 Write-Host "  套件來源  : $(if ($Offline) { 'wheels\（離線）' } else { 'PyPI（連網）' })"
 if ($SeedFrom) { Write-Host "  資料來源  : $SeedFrom（複製，不修改來源）" }
 
@@ -410,6 +450,26 @@ if ($found.Success) {
     Write-Warn 'web.config 內找不到預期的 processPath 格式，請手動確認路徑設定。'
 }
 
+# 掛載路徑前綴。掛成子應用程式卻沒填這一項的話，Flask 會拿帶前綴的路徑去比對
+# 只定義在 '/' 的路由，結果每一頁都是 404，而且 log 裡看不出原因。
+$prefixPattern = '(<environmentVariable\s+name="APP_URL_PREFIX"\s+value=")[^"]*(")'
+if ($content -match $prefixPattern) {
+    $content = [regex]::Replace($content, $prefixPattern, "`${1}$urlPrefix`${2}")
+    if ($urlPrefix) {
+        Write-Ok "APP_URL_PREFIX 設為 $urlPrefix"
+    } else {
+        Write-Ok 'APP_URL_PREFIX 留空（掛在網站根目錄）'
+    }
+} elseif ($urlPrefix) {
+    Stop-Deploy @"
+web.config 內找不到 APP_URL_PREFIX 設定項，無法自動填入子應用程式路徑。
+
+請在 <environmentVariables> 區段手動加上這一行後重跑：
+
+    <environmentVariable name="APP_URL_PREFIX" value="$urlPrefix" />
+"@
+}
+
 if ($content -ne $original) {
     # 保留一份原檔，改壞了可以退回
     Copy-Item $webConfig "$webConfig.bak" -Force
@@ -426,34 +486,38 @@ if ($SkipSite) {
 } else {
     Import-Module WebAdministration -ErrorAction Stop
 
-    # 先檢查連接埠有沒有被別的站台佔走。平行部署時最常見的錯誤就是沿用了
-    # 既有站台的 port，兩個站台同時繫結會讓其中一個起不來。
-    $portOwner = Get-Website | Where-Object {
-        $_.Name -ne $SiteName -and
-        ($_.bindings.Collection | Where-Object { $_.bindingInformation -match ":$Port`:" })
-    } | Select-Object -First 1
-    if ($portOwner) {
-        Stop-Deploy @"
+    if (-not $asApplication) {
+        # 先檢查連接埠有沒有被別的站台佔走。平行部署時最常見的錯誤就是沿用了
+        # 既有站台的 port，兩個站台同時繫結會讓其中一個起不來。
+        $portOwner = Get-Website | Where-Object {
+            $_.Name -ne $SiteName -and
+            ($_.bindings.Collection | Where-Object { $_.bindingInformation -match ":$Port`:" })
+        } | Select-Object -First 1
+        if ($portOwner) {
+            Stop-Deploy @"
 連接埠 $Port 已經被網站「$($portOwner.Name)」使用（目錄：$($portOwner.physicalPath)）。
 
 平行部署請換一個沒有被佔用的連接埠，例如：
 
     .\scripts\deploy-iis.ps1 -AppRoot "$AppRoot" -SiteName "$SiteName" -Port 8002
 "@
+        }
     }
 
-    # 應用程式集區若正被別的站台使用，共用會讓兩邊共享同一個 Python 程序與回收設定
-    $poolOwner = Get-Website | Where-Object {
+    # 應用程式集區若正被別人使用，共用會讓兩邊共享同一個 Python 程序與回收設定
+    $poolOwner = @(Get-Website | Where-Object {
         $_.Name -ne $SiteName -and $_.applicationPool -eq $AppPoolName
-    } | Select-Object -First 1
+    }) + @(Get-WebApplication | Where-Object {
+        $_.applicationPool -eq $AppPoolName -and
+        -not ($asApplication -and $_.path -eq $AppPath)
+    }) | Select-Object -First 1
     if ($poolOwner -and -not $ReplaceExistingSite) {
+        $ownerName = if ($poolOwner.Name) { $poolOwner.Name } else { $poolOwner.path }
         Stop-Deploy @"
-應用程式集區「$AppPoolName」正被網站「$($poolOwner.Name)」使用。
+應用程式集區「$AppPoolName」已經被「$ownerName」使用。
 
-兩個站台共用同一個集區會共享 Python 程序與回收設定，平行部署請分開，例如：
-
-    .\scripts\deploy-iis.ps1 -AppRoot "$AppRoot" ``
-        -SiteName "$SiteName" -AppPoolName "Pool-$SiteName" -Port $Port
+共用同一個集區會共享 Python 程序與回收設定，平行部署請分開，
+用 -AppPoolName 指定一個專屬的集區名稱。
 "@
     }
 
@@ -469,13 +533,50 @@ if ($SkipSite) {
     Set-ItemProperty "IIS:\AppPools\$AppPoolName" startMode 'AlwaysRunning'
     Write-Ok '應用程式集區設定完成（No Managed Code / AlwaysRunning）'
 
-    $site = Get-Website -Name $SiteName -ErrorAction SilentlyContinue
-    if ($site) {
-        $existingPath = $site.physicalPath
-        if ($existingPath -and $existingPath.TrimEnd('\') -ne $AppRoot.TrimEnd('\') -and -not $ReplaceExistingSite) {
-            # 這是平行部署最容易出事的地方：站台名稱撞到既有站台時，
-            # 若直接改 physicalPath，原本在線上的站台就被接管了。
-            Stop-Deploy @"
+    if ($asApplication) {
+        # --- 子應用程式模式 -------------------------------------------------
+        if (-not (Get-Website -Name $ParentSite -ErrorAction SilentlyContinue)) {
+            Stop-Deploy "找不到父網站「$ParentSite」。請用 Get-Website 確認名稱。"
+        }
+
+        $existing = Get-WebApplication -Site $ParentSite -Name $AppPath.TrimStart('/') -ErrorAction SilentlyContinue
+        if ($existing) {
+            $existingPath = $existing.physicalPath
+            if ($existingPath -and $existingPath.TrimEnd('\') -ne $AppRoot.TrimEnd('\') -and -not $ReplaceExistingSite) {
+                # 平行部署最容易出事的地方：路徑撞到線上的應用程式，
+                # 直接改 physicalPath 等於把線上服務接管過去。
+                Stop-Deploy @"
+「$ParentSite$AppPath」這個應用程式已經存在，而且指向不同的目錄：
+
+    既有目錄     : $existingPath
+    這次要部署到 : $AppRoot
+
+繼續下去會把線上服務接管到新目錄。
+
+平行部署請用另一個路徑，例如：
+
+    .\scripts\deploy-iis.ps1 -AppRoot "$AppRoot" ``
+        -ParentSite "$ParentSite" -AppPath "$($AppPath.TrimStart('/'))-v2"
+
+正式切換請改用 scripts\switch-site.ps1（會先同步資料並驗收，失敗自動回退）。
+確實要在這裡直接接管，才加上 -ReplaceExistingSite。
+"@
+            }
+            Write-Info "應用程式 $ParentSite$AppPath 已存在，更新實體路徑與應用程式集區"
+            Set-ItemProperty "IIS:\Sites\$ParentSite$AppPath" physicalPath $AppRoot
+            Set-ItemProperty "IIS:\Sites\$ParentSite$AppPath" applicationPool $AppPoolName
+        } else {
+            New-WebApplication -Site $ParentSite -Name $AppPath.TrimStart('/') `
+                               -PhysicalPath $AppRoot -ApplicationPool $AppPoolName -Force | Out-Null
+            Write-Ok "建立子應用程式 $ParentSite$AppPath"
+        }
+    } else {
+        # --- 獨立網站模式 ---------------------------------------------------
+        $site = Get-Website -Name $SiteName -ErrorAction SilentlyContinue
+        if ($site) {
+            $existingPath = $site.physicalPath
+            if ($existingPath -and $existingPath.TrimEnd('\') -ne $AppRoot.TrimEnd('\') -and -not $ReplaceExistingSite) {
+                Stop-Deploy @"
 網站「$SiteName」已經存在，而且指向不同的目錄：
 
     既有站台目錄 : $existingPath
@@ -490,14 +591,15 @@ if ($SkipSite) {
 
 確實要讓既有站台改指到新目錄，才加上 -ReplaceExistingSite。
 "@
+            }
+            Write-Info "網站 $SiteName 已存在，更新實體路徑與應用程式集區"
+            Set-ItemProperty "IIS:\Sites\$SiteName" physicalPath $AppRoot
+            Set-ItemProperty "IIS:\Sites\$SiteName" applicationPool $AppPoolName
+        } else {
+            New-Website -Name $SiteName -PhysicalPath $AppRoot `
+                        -ApplicationPool $AppPoolName -Port $Port -Force | Out-Null
+            Write-Ok "建立網站 $SiteName（Port $Port）"
         }
-        Write-Info "網站 $SiteName 已存在，更新實體路徑與應用程式集區"
-        Set-ItemProperty "IIS:\Sites\$SiteName" physicalPath $AppRoot
-        Set-ItemProperty "IIS:\Sites\$SiteName" applicationPool $AppPoolName
-    } else {
-        New-Website -Name $SiteName -PhysicalPath $AppRoot `
-                    -ApplicationPool $AppPoolName -Port $Port -Force | Out-Null
-        Write-Ok "建立網站 $SiteName（Port $Port）"
     }
 }
 
@@ -555,7 +657,13 @@ if ($SkipSite) {
     $setupScript = Join-Path $AppRoot 'scripts\setup-ad-login.ps1'
     if (Test-Path $setupScript) {
         Write-Info '呼叫 setup-ad-login.ps1 設定匿名/Windows 驗證 …'
-        & $setupScript -SiteName $SiteName
+        if ($asApplication) {
+            # 驗證設定是綁在「路徑」上的，子應用程式必須帶 -AppPath，
+            # 否則 /auth/sso 的匿名驗證會設到父網站底下的錯誤位置。
+            & $setupScript -SiteName $ParentSite -AppPath $AppPath.TrimStart('/')
+        } else {
+            & $setupScript -SiteName $SiteName
+        }
         Write-Ok '驗證設定完成'
     } else {
         Write-Warn @"
@@ -616,9 +724,11 @@ if (-not $SkipSite) {
 Write-Host ''
 Write-Host '部署完成。' -ForegroundColor Green
 Write-Host ''
-Write-Host '  網址        : ' -NoNewline; Write-Host "http://localhost:$Port/" -ForegroundColor White
+$deployedUrl = if ($asApplication) { "http://localhost$AppPath/" } else { "http://localhost:$Port/" }
+Write-Host '  網址        : ' -NoNewline; Write-Host $deployedUrl -ForegroundColor White
 Write-Host '  即時看 log  : ' -NoNewline; Write-Host "Get-Content `"$logsDir\python.log`" -Tail 20 -Wait" -ForegroundColor White
-Write-Host '  部署後檢查  : ' -NoNewline; Write-Host ".\scripts\check-deployment.ps1 -SiteName $SiteName" -ForegroundColor White
+$checkTarget = if ($asApplication) { $ParentSite } else { $SiteName }
+Write-Host '  部署後檢查  : ' -NoNewline; Write-Host ".\scripts\check-deployment.ps1 -SiteName `"$checkTarget`"" -ForegroundColor White
 Write-Host ''
 Write-Host '  接 PostgreSQL 的後續步驟：' -ForegroundColor Yellow
 Write-Host '    1. Copy-Item .env.example .env   並填入連線資訊'

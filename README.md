@@ -81,7 +81,8 @@ building/
 │   ├── json_store.py          # 地端 JSON 檔案
 │   └── pg_store.py            # PostgreSQL（回傳結構與 JSON 檔完全相同）
 ├── scripts/
-│   ├── deploy-iis.ps1         # IIS 部署（HttpPlatformHandler + Waitress）
+│   ├── deploy-iis.ps1         # IIS 部署（獨立網站或子應用程式）
+│   ├── switch-site.ps1        # 正式切換：把線上網址改指到新版，失敗自動回退
 │   ├── run-migrations.ps1     # 套用 schema、匯入資料與 hash 驗收
 │   ├── run_migrations.py      # migration 執行器
 │   ├── migrate_json_to_pg.py  # 地端 JSON → PostgreSQL 匯入與驗收
@@ -769,21 +770,45 @@ Windows 驗證設定，最後直接起一次 Waitress 做冒煙測試。可重�
 | `-ReplaceExistingSite` | 允許接管已存在且指向其他目錄的 IIS 網站 |
 | `-FullIisReset` | 結束時執行 `iisreset`（預設只重啟本次的應用程式集區） |
 
+### 掛載方式：獨立網站 vs 子應用程式
+
+| 方式 | 網址 | 參數 |
+|---|---|---|
+| 獨立網站 | `http://主機:8001/` | `-SiteName` + `-Port` |
+| 子應用程式 | `http://主機/building_platform` | `-ParentSite` + `-AppPath` |
+
+掛成子應用程式時，腳本會自動把 `web.config` 的 `APP_URL_PREFIX` 填成該路徑。
+**這一項沒填的話每一頁都會是 404**：IIS 轉進來的 `PATH_INFO` 帶著前綴，
+Flask 拿 `/building_platform` 去比對只定義在 `/` 的路由當然對不上。
+填對之後前端會自動跟上（後端把它寫進 `window.APP_BASE`），不需要改 JS。
+
 ### 平行部署（不動既有站台）
 
-新版要先跟舊版並存驗證時，用**不同的目錄、網站名稱與連接埠**部署一套：
+新版要先跟舊版並存驗證時，用**另一個目錄**部署一套。
+
+獨立網站的話換網站名稱與連接埠：
 
 ```powershell
-# 1. 把新版程式放到另一個目錄（不要覆蓋既有部署）
-#    例如 git clone 或直接複製一份到 D:\WebServices\BuildingPlatform-v2
-
-# 2. 平行部署，並帶一份既有資料過來驗證
 .\scripts\deploy-iis.ps1 `
     -AppRoot  "D:\WebServices\BuildingPlatform-v2" `
     -SiteName "BuildingPlatform-v2" `
     -Port     8002 `
     -SeedFrom "D:\WebServices\BuildingPlatform"
 ```
+
+子應用程式的話換路徑（線上是 `/building_platform`，先在 `/building_platform_v2` 驗）：
+
+```powershell
+.\scripts\deploy-iis.ps1 `
+    -AppRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform_v2" `
+    -SeedFrom   "D:\WebServices\BuildingPlatform"
+```
+
+> 子應用程式建議用「同樣掛成子應用程式、但換路徑」的方式驗，而不是臨時改成獨立網站。
+> 這樣路徑前綴、驗證設定與前端 `APP_BASE` 都會走到跟正式環境相同的程式碼路徑，
+> 切換當天才不會第一次執行到沒驗過的東西。
 
 腳本針對平行部署有三道保護：
 
@@ -803,7 +828,54 @@ Windows 驗證設定，最後直接起一次 Waitress 做冒煙測試。可重�
 | 資料 | `-SeedFrom` 是**複製**不是共用。部署後兩邊各走各的，舊站台的新異動不會同步過來 |
 | 登入 | 兩個站台各有自己的 `secret_key.txt`，session 互相獨立 |
 | 舊站台 | 完全不受影響，仍走原本的 wfastcgi `web.config` |
-| 驗收完成後 | 把流量切到新站台（改繫結或前端入口），確認無誤再移除舊站台 |
+| 驗收完成後 | 用 `scripts\switch-site.ps1` 正式切換，確認無誤再移除舊站台 |
+
+### 正式切換（子應用程式）
+
+驗證完成後，把線上網址改指到新版：
+
+```powershell
+.\scripts\switch-site.ps1 `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform" `
+    -NewRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -NewAppPool "Pool-BuildingPlatform-v2"
+```
+
+腳本會照這個順序做，**任何一步失敗都自動回退**：
+
+1. 記錄目前狀態到 `logs\cutover-state.json`
+2. 停止舊版的應用程式集區 —— 切換窗口從這裡開始
+3. 把舊目錄的資料檔複製到新目錄
+4. 新版若已接 PostgreSQL，重跑匯入並驗收 hash
+5. 複製 `secret_key.txt`，已登入的使用者不會被登出
+6. 設定 `APP_URL_PREFIX` 為正式路徑
+7. 應用程式改指到新目錄
+8. 重設 Windows 驗證（驗證設定是綁在路徑上的）
+9. 冒煙測試 `/api/auth/status`（不需登入、永遠回 200）
+
+第 3 步是最容易被忽略的：平行驗證期間舊版的資料已經往前走，
+不重新同步就切過去會吃掉這段異動。所以**一定要先停舊版再同步**，順序不能反。
+
+先看會做什麼：
+
+```powershell
+.\scripts\switch-site.ps1 ... -WhatIfOnly
+```
+
+回退：
+
+```powershell
+.\scripts\switch-site.ps1 `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform" `
+    -NewRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -Rollback
+```
+
+> 回退期間若有人已經在新版改過資料，那些異動不會自動回到舊目錄。
+> 切換窗口盡量挑沒人使用的時段，就是為了縮小這個風險。
+> 舊目錄不會被腳本刪除或修改，跑順一兩週再清。
 
 ### 前置需求
 
