@@ -117,12 +117,12 @@ def migrate_audit_records(app_root, dry_run):
 
     with db.transaction() as cur:
         # 重跑時先清空，避免同一批紀錄被匯入兩次
-        cur.execute("DELETE FROM building.data_change_log")
+        cur.execute("DELETE FROM building_mgmt.data_change_log")
         for record in records:
             summary = record.get('summary') or {}
             cur.execute(
                 """
-                INSERT INTO building.data_change_log (
+                INSERT INTO building_mgmt.data_change_log (
                     changed_at, effective_date, change_type, changed_by, reason,
                     source_reference, revision_before, revision_after, backup_file,
                     summary, counts

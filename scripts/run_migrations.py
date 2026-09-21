@@ -10,7 +10,7 @@
     python scripts/run_migrations.py               # 套用未執行的 migration
     python scripts/run_migrations.py --skip-roles  # 略過需要 CREATEROLE 的 003
 
-每個檔案套用後會把版本與 sha256 記進 building.schema_migrations。
+每個檔案套用後會把版本與 sha256 記進 building_mgmt.schema_migrations。
 已套用過的檔案若內容被改動，會提出警告但不重跑 ——
 migration 一旦上過正式機就該視為不可變，要改請新增一個檔案。
 """
@@ -30,8 +30,8 @@ import db  # noqa: E402
 MIGRATIONS_DIR = os.path.join(_APP_ROOT, 'migrations')
 
 _BOOTSTRAP_SQL = """
-CREATE SCHEMA IF NOT EXISTS building;
-CREATE TABLE IF NOT EXISTS building.schema_migrations (
+CREATE SCHEMA IF NOT EXISTS building_mgmt;
+CREATE TABLE IF NOT EXISTS building_mgmt.schema_migrations (
     version    text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now(),
     applied_by text NOT NULL DEFAULT current_user,
@@ -59,10 +59,10 @@ def discover(skip_roles=False):
 
 def applied_state(conn):
     with conn.cursor() as cur:
-        cur.execute("SELECT to_regclass('building.schema_migrations')")
+        cur.execute("SELECT to_regclass('building_mgmt.schema_migrations')")
         if cur.fetchone()[0] is None:
             return {}
-        cur.execute("SELECT version, checksum FROM building.schema_migrations")
+        cur.execute("SELECT version, checksum FROM building_mgmt.schema_migrations")
         return dict(cur.fetchall())
 
 
@@ -77,7 +77,7 @@ def _sync_data_dictionary():
     from store import pg_store
 
     count = pg_store.sync_data_dictionary(DATA_DICTIONARY_ROWS)
-    _log(f"欄位字典已同步 {count} 筆到 building.data_dictionary。")
+    _log(f"欄位字典已同步 {count} 筆到 building_mgmt.data_dictionary。")
 
 
 def main():
@@ -146,7 +146,7 @@ def main():
                     cur.execute(body)
                     cur.execute(
                         """
-                        INSERT INTO building.schema_migrations (version, checksum)
+                        INSERT INTO building_mgmt.schema_migrations (version, checksum)
                         VALUES (%s, %s)
                         ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum
                         """,

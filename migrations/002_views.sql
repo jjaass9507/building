@@ -1,25 +1,29 @@
 -- =============================================================================
--- 002_views.sql — building_api 對外 view 層
+-- 002_views.sql — 對外 view 層（v_ 開頭）
 --
 -- 為什麼要多這一層：
---   BI / 報表工具會直接連這個資料庫。如果讓它們吃 building schema 的內部表，
---   之後任何一次重構都會打壞別人的報表。外部只看得到 building_api 的 view，
+--   BI / 報表工具會直接連這個資料庫。如果讓它們吃內部表，之後任何一次重構
+--   都會打壞別人的報表。外部只授權 v_ 開頭的 view（見 003_roles_grants.sql），
 --   內部表怎麼改都能靠 view 維持相容。
+--
+--   表與 view 同放在 building_mgmt 這一個 schema，靠 v_ 前綴區分，
+--   隔離則由授權層負責：reader 角色只拿得到這些 view 的 SELECT。
 --
 -- 欄位命名與 build_standard_workbook() 匯出的 Excel 完全一致，
 -- 讓「匯出報表」與「BI 查詢」是同一套語意。
+--
+-- ⚠ 新增 view 時記得同步補進 003_roles_grants.sql 的授權清單，
+--    否則外部帳號看不到新的 view。
 --
 -- 本檔可重複執行（idempotent）。
 -- =============================================================================
 
 BEGIN;
 
-CREATE SCHEMA IF NOT EXISTS building_api;
-
 -- -----------------------------------------------------------------------------
 -- 建物主檔（對應 Excel 的 building_master 工作表）
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_building_master AS
+CREATE OR REPLACE VIEW building_mgmt.v_building_master AS
 SELECT
     b.building_id,
     b.building_code,
@@ -30,18 +34,18 @@ SELECT
     b.seismic_coefficient_gal,
     b.car_parking_spaces,
     b.motorcycle_parking_spaces,
-    (SELECT count(*) FROM building.floors f WHERE f.building_id = b.building_id) AS floor_count,
+    (SELECT count(*) FROM building_mgmt.floors f WHERE f.building_id = b.building_id) AS floor_count,
     (SELECT COALESCE(sum(f.floor_area_m2), 0)
-       FROM building.floors f WHERE f.building_id = b.building_id)               AS total_floor_area_m2,
+       FROM building_mgmt.floors f WHERE f.building_id = b.building_id)               AS total_floor_area_m2,
     b.updated_at
-FROM building.buildings b;
+FROM building_mgmt.buildings b;
 
 -- -----------------------------------------------------------------------------
 -- 樓層明細（對應 Excel 的 floor_area_detail 工作表）
 --
 -- 廠務設施明細在內部是長表，這裡 pivot 回 Excel 既有的寬欄位。
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_floor_area_detail AS
+CREATE OR REPLACE VIEW building_mgmt.v_floor_area_detail AS
 SELECT
     f.floor_id,
     f.building_id,
@@ -71,8 +75,8 @@ SELECT
     COALESCE(a.other,       0) AS facility_other_m2,
     f.floor_load_kgf_m2,
     f.updated_at
-FROM building.floors f
-JOIN building.buildings b ON b.building_id = f.building_id
+FROM building_mgmt.floors f
+JOIN building_mgmt.buildings b ON b.building_id = f.building_id
 LEFT JOIN LATERAL (
     SELECT
         sum(x.area_m2) FILTER (WHERE x.facility_key = '純水')   AS pure_water,
@@ -88,21 +92,21 @@ LEFT JOIN LATERAL (
         sum(x.area_m2) FILTER (WHERE x.facility_key NOT IN (
             '純水','廢水','給排水','空調','抽氣','氣體','電力','弱電','消防','監控'
         )) AS other
-    FROM building.floor_facility_areas x
+    FROM building_mgmt.floor_facility_areas x
     WHERE x.floor_id = f.floor_id
 ) a ON true;
 
 -- -----------------------------------------------------------------------------
 -- 年度新增明細（對應 Excel 的「年度新增明細」工作表 / _annual_rows()）
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_annual_growth AS
+CREATE OR REPLACE VIEW building_mgmt.v_annual_growth AS
 WITH per_year AS (
     SELECT
         COALESCE(f.expected_completion_year_num, 0) AS year_num,
         sum(f.floor_area_m2)                       AS added_area_m2,
         string_agg(DISTINCT b.building_code, '、' ORDER BY b.building_code) AS added_buildings
-    FROM building.floors f
-    JOIN building.buildings b ON b.building_id = f.building_id
+    FROM building_mgmt.floors f
+    JOIN building_mgmt.buildings b ON b.building_id = f.building_id
     GROUP BY 1
 ), running AS (
     SELECT
@@ -134,7 +138,7 @@ FROM running;
 -- -----------------------------------------------------------------------------
 -- 製程大群組面積彙總
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_process_group_area AS
+CREATE OR REPLACE VIEW building_mgmt.v_process_group_area AS
 SELECT
     COALESCE(g.group_name, '未分群') AS group_name,
     CASE WHEN btrim(f.process_name) = '' THEN '非製程' ELSE f.process_name END AS process_name,
@@ -142,15 +146,15 @@ SELECT
     sum(f.floor_area_m2)             AS floor_area_m2,
     sum(f.cleanroom_area_m2)         AS cleanroom_area_m2,
     sum(f.facility_area_m2)          AS facility_area_m2
-FROM building.floors f
-LEFT JOIN building.process_group_members m ON m.process_name = f.process_name
-LEFT JOIN building.process_groups        g ON g.group_id = m.group_id
+FROM building_mgmt.floors f
+LEFT JOIN building_mgmt.process_group_members m ON m.process_name = f.process_name
+LEFT JOIN building_mgmt.process_groups        g ON g.group_id = m.group_id
 GROUP BY 1, 2;
 
 -- -----------------------------------------------------------------------------
 -- 需求趨勢（電力／用水）
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_utility_trend AS
+CREATE OR REPLACE VIEW building_mgmt.v_utility_trend AS
 SELECT
     m.metric_key,
     m.metric_name,
@@ -163,13 +167,13 @@ SELECT
     sum(p.value) OVER (PARTITION BY m.metric_key ORDER BY p.sort_order, p.year_key
                        ROWS UNBOUNDED PRECEDING) AS cumulative_value,
     CASE WHEN p.is_baseline THEN 0 ELSE p.value END AS annual_value
-FROM building.utility_metrics m
-JOIN building.utility_metric_points p ON p.metric_key = m.metric_key;
+FROM building_mgmt.utility_metrics m
+JOIN building_mgmt.utility_metric_points p ON p.metric_key = m.metric_key;
 
 -- -----------------------------------------------------------------------------
 -- 異動紀錄（對應 Excel 的 change_log 工作表）
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_change_log AS
+CREATE OR REPLACE VIEW building_mgmt.v_change_log AS
 SELECT
     c.change_id,
     c.changed_at,
@@ -187,21 +191,21 @@ SELECT
     (c.summary ->> 'floors_added')::int      AS floors_added,
     (c.summary ->> 'floors_removed')::int    AS floors_removed,
     (c.summary ->> 'floors_updated')::int    AS floors_updated
-FROM building.data_change_log c;
+FROM building_mgmt.data_change_log c;
 
 -- -----------------------------------------------------------------------------
 -- 欄位字典（給外部團隊查，不用來問我們欄位是什麼意思）
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE VIEW building_api.v_data_dictionary AS
+CREATE OR REPLACE VIEW building_mgmt.v_data_dictionary AS
 SELECT
     object_name,
     -- 對外查詢時直接給得出完整的 view 名稱，不用自己拼
-    'building_api.v_' || object_name AS view_name,
+    'building_mgmt.v_' || object_name AS view_name,
     field_name,
     description,
     data_type,
     rule_or_unit
-FROM building.data_dictionary
+FROM building_mgmt.data_dictionary
 ORDER BY object_name, sort_order, field_name;
 
 COMMIT;

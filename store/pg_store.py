@@ -45,7 +45,7 @@ def _number(value: Any) -> float:
 def _floor_weight(floor_name: Any) -> Optional[float]:
     """樓層排序權重。與前端 static/js/utils.js 的 getFloorWeight() 同一套規則。
 
-    落地到資料庫是為了讓 building_api 的 view 也能正確排序，
+    落地到資料庫是為了讓 building_mgmt 的 view 也能正確排序，
     外部 BI 不需要自己重寫一次樓層排序邏輯。
     """
     text = _text(floor_name).upper()
@@ -104,18 +104,18 @@ FROM (
                             'value',   f.facility_area_m2::float8,
                             'details', COALESCE((
                                 SELECT jsonb_object_agg(a.facility_key, a.area_m2::float8)
-                                FROM building.floor_facility_areas a
+                                FROM building_mgmt.floor_facility_areas a
                                 WHERE a.floor_id = f.floor_id
                             ), '{}'::jsonb)
                         )
                     )
                     ORDER BY f.sort_order, f.floor_name
                 )
-                FROM building.floors f
+                FROM building_mgmt.floors f
                 WHERE f.building_id = b.building_id
             ), '[]'::jsonb)
         ) AS doc
-    FROM building.buildings b
+    FROM building_mgmt.buildings b
 ) t
 """
 
@@ -132,7 +132,7 @@ def current_revision() -> str:
     """目前資料集的 revision（樂觀鎖用）。"""
     with db.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT revision FROM building.dataset_state WHERE id = 1")
+            cur.execute("SELECT revision FROM building_mgmt.dataset_state WHERE id = 1")
             row = cur.fetchone()
             return row[0] if row else ''
 
@@ -213,7 +213,7 @@ def _facility_rows(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 _MERGE_BUILDINGS_SQL = """
-MERGE INTO building.buildings t
+MERGE INTO building_mgmt.buildings t
 USING (
     SELECT * FROM jsonb_to_recordset(%(payload)s) AS x(
         building_id               text,
@@ -251,7 +251,7 @@ WHEN NOT MATCHED THEN INSERT (
 """
 
 _MERGE_FLOORS_SQL = """
-MERGE INTO building.floors t
+MERGE INTO building_mgmt.floors t
 USING (
     SELECT * FROM jsonb_to_recordset(%(payload)s) AS x(
         floor_id                     text,
@@ -277,7 +277,7 @@ WHEN MATCHED THEN UPDATE SET
     building_id                  = s.building_id,
     floor_name                   = s.floor_name,
     floor_weight                 = s.floor_weight,
-    status                       = s.status::building.floor_status,
+    status                       = s.status::building_mgmt.floor_status,
     expected_completion_year_raw = s.expected_completion_year_raw,
     expected_completion_year_num = s.expected_completion_year_num,
     process_name                 = s.process_name,
@@ -297,7 +297,7 @@ WHEN NOT MATCHED THEN INSERT (
     floor_height_cm, cleanroom_clear_height_cm, floor_area_m2, cleanroom_area_m2,
     production_support_area_m2, public_area_m2, facility_area_m2, floor_load_kgf_m2, sort_order
 ) VALUES (
-    s.floor_id, s.building_id, s.floor_name, s.floor_weight, s.status::building.floor_status,
+    s.floor_id, s.building_id, s.floor_name, s.floor_weight, s.status::building_mgmt.floor_status,
     s.expected_completion_year_raw, s.expected_completion_year_num, s.process_name,
     s.floor_height_cm, s.cleanroom_clear_height_cm, s.floor_area_m2, s.cleanroom_area_m2,
     s.production_support_area_m2, s.public_area_m2, s.facility_area_m2, s.floor_load_kgf_m2, s.sort_order
@@ -306,7 +306,7 @@ WHEN NOT MATCHED THEN INSERT (
 
 
 _UPDATE_STATE_SQL = """
-UPDATE building.dataset_state
+UPDATE building_mgmt.dataset_state
    SET revision = %(revision)s,
        building_count = %(buildings)s,
        floor_count = %(floors)s,
@@ -356,12 +356,12 @@ def _claim_dataset_state(cur, *, new_revision, counts, username, expected_revisi
         row = cur.fetchone()
         if row is None:
             # 交易還沒結束，這裡讀到的就是搶先者已提交的值
-            cur.execute("SELECT revision FROM building.dataset_state WHERE id = 1")
+            cur.execute("SELECT revision FROM building_mgmt.dataset_state WHERE id = 1")
             found = cur.fetchone()
             raise RevisionConflict(found[0] if found else '')
         return row[0]
 
-    cur.execute("SELECT revision FROM building.dataset_state WHERE id = 1 FOR UPDATE")
+    cur.execute("SELECT revision FROM building_mgmt.dataset_state WHERE id = 1 FOR UPDATE")
     row = cur.fetchone()
     revision_before = row[0] if row else ''
     if expected_revision is not None and revision_before != expected_revision:
@@ -406,22 +406,22 @@ def save_current_data(
         # 建物：先 upsert 再刪掉不在清單裡的（刪除會連帶 cascade 掉底下的樓層）
         cur.execute(_MERGE_BUILDINGS_SQL, {'payload': Jsonb(building_rows)})
         cur.execute(
-            "DELETE FROM building.buildings WHERE building_id <> ALL(%(ids)s)",
+            "DELETE FROM building_mgmt.buildings WHERE building_id <> ALL(%(ids)s)",
             {'ids': [r['building_id'] for r in building_rows]},
         )
 
         cur.execute(_MERGE_FLOORS_SQL, {'payload': Jsonb(floor_rows)})
         cur.execute(
-            "DELETE FROM building.floors WHERE floor_id <> ALL(%(ids)s)",
+            "DELETE FROM building_mgmt.floors WHERE floor_id <> ALL(%(ids)s)",
             {'ids': [r['floor_id'] for r in floor_rows]},
         )
 
         # 廠務設施明細筆數少，整批重寫比逐筆比對簡單也不容易出錯
-        cur.execute("DELETE FROM building.floor_facility_areas")
+        cur.execute("DELETE FROM building_mgmt.floor_facility_areas")
         if facility_rows:
             cur.execute(
                 """
-                INSERT INTO building.floor_facility_areas (floor_id, facility_key, area_m2)
+                INSERT INTO building_mgmt.floor_facility_areas (floor_id, facility_key, area_m2)
                 SELECT * FROM jsonb_to_recordset(%(payload)s)
                     AS x(floor_id text, facility_key text, area_m2 numeric)
                 """,
@@ -431,7 +431,7 @@ def save_current_data(
         if snapshot:
             cur.execute(
                 """
-                INSERT INTO building.dataset_snapshots (revision, doc, counts, created_by)
+                INSERT INTO building_mgmt.dataset_snapshots (revision, doc, counts, created_by)
                 VALUES (%(revision)s, %(doc)s, %(counts)s, %(username)s)
                 ON CONFLICT (revision) DO NOTHING
                 """,
@@ -446,7 +446,7 @@ def save_current_data(
         if audit:
             cur.execute(
                 """
-                INSERT INTO building.data_change_log (
+                INSERT INTO building_mgmt.data_change_log (
                     changed_at, effective_date, change_type, changed_by, reason,
                     source_reference, revision_before, revision_after, backup_file,
                     summary, counts
@@ -485,7 +485,7 @@ def load_audit_records(limit: int = 1000) -> List[Dict[str, Any]]:
                        source_reference, revision_before, revision_after, backup_file,
                        summary, counts
                 FROM (
-                    SELECT * FROM building.data_change_log
+                    SELECT * FROM building_mgmt.data_change_log
                     ORDER BY change_id DESC LIMIT %(limit)s
                 ) recent
                 ORDER BY change_id
@@ -518,7 +518,7 @@ def _load_setting(key: str, default: Any) -> Any:
     with db.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT value FROM building.app_settings WHERE setting_key = %s", (key,)
+                "SELECT value FROM building_mgmt.app_settings WHERE setting_key = %s", (key,)
             )
             row = cur.fetchone()
             return row[0] if row else default
@@ -527,7 +527,7 @@ def _load_setting(key: str, default: Any) -> Any:
 def _save_setting(cur, key: str, value: Any, username: Optional[str]) -> None:
     cur.execute(
         """
-        INSERT INTO building.app_settings (setting_key, value, updated_at, updated_by)
+        INSERT INTO building_mgmt.app_settings (setting_key, value, updated_at, updated_by)
         VALUES (%(key)s, %(value)s, now(), %(username)s)
         ON CONFLICT (setting_key) DO UPDATE
            SET value = EXCLUDED.value,
@@ -548,8 +548,8 @@ def load_process_groups() -> Dict[str, Any]:
                        COALESCE(array_agg(m.process_name
                                           ORDER BY m.sort_order, m.process_name)
                                 FILTER (WHERE m.process_name IS NOT NULL), '{}')
-                FROM building.process_groups g
-                LEFT JOIN building.process_group_members m ON m.group_id = g.group_id
+                FROM building_mgmt.process_groups g
+                LEFT JOIN building_mgmt.process_group_members m ON m.group_id = g.group_id
                 GROUP BY g.group_id, g.group_name, g.sort_order
                 ORDER BY g.sort_order, g.group_name
                 """
@@ -572,7 +572,7 @@ def write_process_groups(data: Dict[str, Any], username: Optional[str] = None) -
         cur.execute("SET CONSTRAINTS ALL DEFERRED")
         cur.execute(
             """
-            INSERT INTO building.process_groups (group_id, group_name, sort_order, updated_at, updated_by)
+            INSERT INTO building_mgmt.process_groups (group_id, group_name, sort_order, updated_at, updated_by)
             SELECT x.group_id, x.group_name, x.sort_order, now(), %(username)s
             FROM jsonb_to_recordset(%(payload)s)
                 AS x(group_id text, group_name text, sort_order integer)
@@ -595,13 +595,13 @@ def write_process_groups(data: Dict[str, Any], username: Optional[str] = None) -
             },
         )
         cur.execute(
-            "DELETE FROM building.process_groups WHERE group_id <> ALL(%(ids)s)",
+            "DELETE FROM building_mgmt.process_groups WHERE group_id <> ALL(%(ids)s)",
             {'ids': [_text(g.get('id')) for g in groups]},
         )
 
         # 成員整批重寫：製程分群是小表，而且 process_name 是主鍵，
         # 逐筆搬移比整批重建更容易踩到唯一鍵衝突。
-        cur.execute("DELETE FROM building.process_group_members")
+        cur.execute("DELETE FROM building_mgmt.process_group_members")
         members = [
             {'process_name': _text(p), 'group_id': _text(g.get('id')), 'sort_order': index}
             for g in groups
@@ -611,7 +611,7 @@ def write_process_groups(data: Dict[str, Any], username: Optional[str] = None) -
         if members:
             cur.execute(
                 """
-                INSERT INTO building.process_group_members (process_name, group_id, sort_order)
+                INSERT INTO building_mgmt.process_group_members (process_name, group_id, sort_order)
                 SELECT * FROM jsonb_to_recordset(%(payload)s)
                     AS x(process_name text, group_id text, sort_order integer)
                 """,
@@ -656,8 +656,8 @@ def load_utility_trends() -> Dict[str, Any]:
                                'note',        p.note
                            ) ORDER BY p.sort_order, p.year_key
                        ) FILTER (WHERE p.year_key IS NOT NULL), '[]'::jsonb)
-                FROM building.utility_metrics m
-                LEFT JOIN building.utility_metric_points p ON p.metric_key = m.metric_key
+                FROM building_mgmt.utility_metrics m
+                LEFT JOIN building_mgmt.utility_metric_points p ON p.metric_key = m.metric_key
                 GROUP BY m.metric_key, m.metric_name, m.unit, m.annual_label,
                          m.cumulative_label, m.description, m.sort_order
                 ORDER BY m.sort_order, m.metric_key
@@ -687,7 +687,7 @@ def write_utility_trends(data: Dict[str, Any], username: Optional[str] = None) -
     with db.transaction() as cur:
         cur.execute(
             """
-            INSERT INTO building.utility_metrics (
+            INSERT INTO building_mgmt.utility_metrics (
                 metric_key, metric_name, unit, annual_label, cumulative_label,
                 description, sort_order
             )
@@ -721,7 +721,7 @@ def write_utility_trends(data: Dict[str, Any], username: Optional[str] = None) -
             },
         )
         cur.execute(
-            "DELETE FROM building.utility_metrics WHERE metric_key <> ALL(%(keys)s)",
+            "DELETE FROM building_mgmt.utility_metrics WHERE metric_key <> ALL(%(keys)s)",
             {'keys': [_text(m.get('metric_key')) for m in metrics]},
         )
 
@@ -739,11 +739,11 @@ def write_utility_trends(data: Dict[str, Any], username: Optional[str] = None) -
             for index, p in enumerate(m.get('series') or [])
             if _text(p.get('year_key'))
         ]
-        cur.execute("DELETE FROM building.utility_metric_points")
+        cur.execute("DELETE FROM building_mgmt.utility_metric_points")
         if points:
             cur.execute(
                 """
-                INSERT INTO building.utility_metric_points (
+                INSERT INTO building_mgmt.utility_metric_points (
                     metric_key, year_key, year_label, value, is_baseline, note, sort_order
                 )
                 SELECT * FROM jsonb_to_recordset(%(payload)s) AS x(
@@ -774,7 +774,7 @@ def load_permissions() -> Dict[str, List[str]]:
             cur.execute(
                 """
                 SELECT role::text, identity_key
-                FROM building.user_roles
+                FROM building_mgmt.user_roles
                 WHERE is_active
                 ORDER BY role, identity_key
                 """
@@ -800,7 +800,7 @@ def find_role(identity_variants: List[str]) -> Optional[str]:
             cur.execute(
                 """
                 SELECT role::text
-                FROM building.user_roles
+                FROM building_mgmt.user_roles
                 WHERE is_active
                   AND (identity_key = ANY(%(variants)s) OR account_key = ANY(%(variants)s))
                 ORDER BY role
@@ -833,8 +833,8 @@ def write_permissions(permissions: Dict[str, List[str]], username: Optional[str]
         if rows:
             cur.execute(
                 """
-                INSERT INTO building.user_roles (identity_key, role, created_by, updated_by)
-                SELECT x.identity_key, x.role::building.user_role, %(username)s, %(username)s
+                INSERT INTO building_mgmt.user_roles (identity_key, role, created_by, updated_by)
+                SELECT x.identity_key, x.role::building_mgmt.user_role, %(username)s, %(username)s
                 FROM jsonb_to_recordset(%(payload)s) AS x(identity_key text, role text)
                 ON CONFLICT (identity_key) DO UPDATE
                    SET role = EXCLUDED.role,
@@ -845,7 +845,7 @@ def write_permissions(permissions: Dict[str, List[str]], username: Optional[str]
                 {'payload': Jsonb(rows), 'username': username},
             )
         cur.execute(
-            "DELETE FROM building.user_roles WHERE identity_key <> ALL(%(keys)s)",
+            "DELETE FROM building_mgmt.user_roles WHERE identity_key <> ALL(%(keys)s)",
             {'keys': [r['identity_key'] for r in rows]},
         )
 
@@ -863,7 +863,7 @@ def append_access_log(username, action, client_ip=None, detail='', identity_key=
     with db.transaction() as cur:
         cur.execute(
             """
-            INSERT INTO building.access_log
+            INSERT INTO building_mgmt.access_log
                 (username, identity_key, role, action, client_ip, detail)
             VALUES (%s, %s, %s, %s, %s, %s)
             """,
@@ -882,7 +882,7 @@ def load_data_dictionary() -> List[tuple]:
             cur.execute(
                 """
                 SELECT object_name, field_name, description, data_type, rule_or_unit, sort_order
-                FROM building.data_dictionary
+                FROM building_mgmt.data_dictionary
                 ORDER BY object_name, sort_order, field_name
                 """
             )
@@ -893,7 +893,7 @@ def sync_data_dictionary(rows) -> int:
     """把程式裡的欄位字典同步到資料庫，回傳同步的筆數。
 
     定義只寫在 building_data_manager.DATA_DICTIONARY_ROWS 一處，
-    這裡負責把它推到資料庫，供 building_api.v_data_dictionary 給外部查詢。
+    這裡負責把它推到資料庫，供 building_mgmt.v_data_dictionary 給外部查詢。
     程式裡已經沒有的項目會一併刪掉，避免留下過期說明。
     """
     payload = [
@@ -908,7 +908,7 @@ def sync_data_dictionary(rows) -> int:
         if payload:
             cur.execute(
                 """
-                INSERT INTO building.data_dictionary
+                INSERT INTO building_mgmt.data_dictionary
                     (object_name, field_name, description, data_type, rule_or_unit, sort_order)
                 SELECT * FROM jsonb_to_recordset(%(payload)s) AS x(
                     object_name text, field_name text, description text,
@@ -924,7 +924,7 @@ def sync_data_dictionary(rows) -> int:
             )
         cur.execute(
             """
-            DELETE FROM building.data_dictionary d
+            DELETE FROM building_mgmt.data_dictionary d
              WHERE NOT EXISTS (
                  SELECT 1 FROM jsonb_to_recordset(%(payload)s)
                      AS x(object_name text, field_name text)
@@ -942,7 +942,7 @@ def ensure_access_log_partitions(months_ahead: int = 1) -> List[str]:
     with db.transaction() as cur:
         for offset in range(months_ahead + 1):
             cur.execute(
-                "SELECT building.ensure_access_log_partition("
+                "SELECT building_mgmt.ensure_access_log_partition("
                 "(CURRENT_DATE + (%s || ' month')::interval)::date)",
                 (offset,),
             )

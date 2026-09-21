@@ -73,8 +73,8 @@ building/
 ├── app.log                    # 應用程式 log
 ├── secret_key.txt             # 登入 session 簽章金鑰，首次啟動自動產生，不納入版控
 ├── migrations/                # PostgreSQL schema migration
-│   ├── 001_init.sql           # building schema：主表、稽核、權限、存取紀錄
-│   ├── 002_views.sql          # building_api schema：對外 view 層
+│   ├── 001_init.sql           # building_mgmt schema：主表、稽核、權限、存取紀錄
+│   ├── 002_views.sql          # 對外 view 層（v_ 開頭，同一個 schema）
 │   └── 003_roles_grants.sql   # 角色與授權（需要 CREATEROLE，通常由 DBA 執行）
 ├── store/                     # 資料存取層，app.py 只透過這裡讀寫
 │   ├── __init__.py            # 門面：依 DATA_BACKEND 分派，並處理雙寫
@@ -357,7 +357,7 @@ SIMPLE bind 不需要 MD4。bind 帳號格式依序嘗試 `NETBIOS\帳號` → `
 同一個人在不同來源寫法不同（SSO 是 `ASE\K11879`，手動登入是 `K11879`），
 系統比對權限名單時會自動拆解 `網域\帳號`、`帳號@網域`、純帳號三種寫法，
 因此 `permissions.json` 填哪一種都可以對得起來。
-（權限改由資料庫管理後規則相同：`building.user_roles` 同時存完整寫法與去網域的短寫法，
+（權限改由資料庫管理後規則相同：`building_mgmt.user_roles` 同時存完整寫法與去網域的短寫法，
 兩邊都比對，結果與檔案版完全等價。）
 
 ### 本機開發
@@ -610,31 +610,47 @@ store/
 
 - **關聯式為主，JSONB 只用在稽核快照。** 年度成長趨勢、製程分群、面積佔比這些
   分析本質上都是 group by + sum，關聯式做這些是幾行 SQL。
-- **`data_backups/` 的「整包還原」語意由 `building.dataset_snapshots` 保留**，
+- **`data_backups/` 的「整包還原」語意由 `building_mgmt.dataset_snapshots` 保留**，
   每個 revision 存一份完整 jsonb，可回溯任一版本。
 - **沒有做 SCD-2 時序表。** 年度資訊是 `floors` 的欄位，不是紀錄的生效期間，
   做時序表只會讓每個查詢都要加 `WHERE valid_to IS NULL`。
 - **面積一律 `numeric` 不用浮點數**，避免大量 SUM 與百分比運算累積誤差。
-- **樂觀鎖沿用現有的 `dataset_revision`**，存檔時對 `building.dataset_state`
+- **樂觀鎖沿用現有的 `dataset_revision`**，存檔時對 `building_mgmt.dataset_state`
   下條件式 UPDATE，影響 0 列就回 409，行為與檔案版完全一致。
 - **欄位名稱沿用 `build_standard_workbook()` 既有的英文對照**，
   Excel 匯出、資料表、對外 view 三者同一套語意。
 
-### schema 分層
+### schema 與角色
 
-| Schema | 內容 | 可存取的角色 |
-|---|---|---|
-| `building` | 內部表 | `building_app`（DML）、`building_migrate`（DDL） |
-| `building_api` | 對外 view 層 | `building_reader`（唯讀） |
+所有物件都放在 **`building_mgmt`** 這一個 schema，表與 view 靠 `v_` 前綴區分：
 
-外部 BI 只看得到 `building_api`，連內部表的存在都看不到，
-這樣內部結構怎麼重構都不會打壞別人的報表。
+| 物件 | 用途 |
+|---|---|
+| `building_mgmt.<表名>` | 內部表，只有應用程式存取 |
+| `building_mgmt.v_<名稱>` | 對外 view，給 BI／報表 |
+
+| 角色 | 權限 |
+|---|---|
+| `building_mgmt_migrate` | schema 與物件的擁有者，只在跑 migration 時使用 |
+| `building_mgmt_app` | 應用程式日常使用，只有 DML，不能改結構 |
+| `building_mgmt_reader` | 外部 BI，**只授權 7 個 `v_` 開頭的 view**，內部表一個都看不到 |
+
+schema 與角色名稱都帶 `building_mgmt` 字樣，在共用的資料庫主機上一眼就能看出
+是建物管理平台的資料。角色尤其重要 —— PostgreSQL 的角色是**整個 cluster 共用**的，
+撞名風險比 schema 還高。
+
+表與 view 同在一個 schema，所以隔離不是靠「不給 USAGE」，而是**逐一授權 view**。
+`003_roles_grants.sql` 最後有一段防呆：只要有任何非 `v_` 開頭的物件被授權給 reader，
+migration 會直接失敗並指出是哪一張表。
+
+> 新增 view 時記得同步補進 `003_roles_grants.sql` 的授權清單，
+> 否則外部帳號看不到新的 view。
 
 ### 欄位字典
 
 欄位說明只定義在 `building_data_manager.DATA_DICTIONARY_ROWS` 一處，由
-`scripts/run_migrations.py` 同步到 `building.data_dictionary`，再經
-`building_api.v_data_dictionary` 提供給外部查詢（該 view 會一併給出對應的
+`scripts/run_migrations.py` 同步到 `building_mgmt.data_dictionary`，再經
+`building_mgmt.v_data_dictionary` 提供給外部查詢（該 view 會一併給出對應的
 完整 view 名稱，外部不用自己拼）。
 
 - 標準資料版 Excel 的 `data_dictionary` 工作表在 `postgres` 模式下**讀資料庫那張表**，
@@ -736,7 +752,7 @@ PGHOST=... PGPORT=... PGDATABASE=... PGUSER=... PGPASSWORD=... \
 ### migration 規範
 
 `migrations/*.sql` 依檔名排序執行，套用紀錄與 sha256 存在
-`building.schema_migrations`。**已經上過正式機的 migration 視為不可變**，
+`building_mgmt.schema_migrations`。**已經上過正式機的 migration 視為不可變**，
 要改請新增一個檔案；執行器偵測到已套用檔案的內容有變動時會提出警告但不重跑。
 
 ---

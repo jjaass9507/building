@@ -175,16 +175,16 @@ class BackendParityTests(unittest.TestCase):
             conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute("""
-                    TRUNCATE building.buildings,
-                             building.process_groups,
-                             building.utility_metrics,
-                             building.app_settings,
-                             building.dataset_snapshots,
-                             building.data_change_log
+                    TRUNCATE building_mgmt.buildings,
+                             building_mgmt.process_groups,
+                             building_mgmt.utility_metrics,
+                             building_mgmt.app_settings,
+                             building_mgmt.dataset_snapshots,
+                             building_mgmt.data_change_log
                     RESTART IDENTITY CASCADE
                 """)
                 cur.execute("""
-                    UPDATE building.dataset_state
+                    UPDATE building_mgmt.dataset_state
                        SET revision = %s, building_count = 0, floor_count = 0
                      WHERE id = 1
                 """, ('4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',))

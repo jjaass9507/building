@@ -18,12 +18,12 @@
 
 BEGIN;
 
-CREATE SCHEMA IF NOT EXISTS building;
+CREATE SCHEMA IF NOT EXISTS building_mgmt;
 
 -- -----------------------------------------------------------------------------
 -- migration 版本紀錄（scripts/run-migrations.ps1 會讀寫這張表）
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.schema_migrations (
+CREATE TABLE IF NOT EXISTS building_mgmt.schema_migrations (
     version    text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now(),
     applied_by text NOT NULL DEFAULT current_user,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS building.schema_migrations (
 -- -----------------------------------------------------------------------------
 -- 建物主檔
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.buildings (
+CREATE TABLE IF NOT EXISTS building_mgmt.buildings (
     building_id               text PRIMARY KEY,          -- 沿用現有 BLD-uuid5，不重新編號
     building_code             text NOT NULL,             -- 棟別
     site_area_m2              numeric(14,4) NOT NULL DEFAULT 0,
@@ -62,18 +62,18 @@ CREATE TABLE IF NOT EXISTS building.buildings (
 -- 樓層明細
 -- -----------------------------------------------------------------------------
 DO $$ BEGIN
-    CREATE TYPE building.floor_status AS ENUM ('已成廠', '未成廠');
+    CREATE TYPE building_mgmt.floor_status AS ENUM ('已成廠', '未成廠');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
-CREATE TABLE IF NOT EXISTS building.floors (
+CREATE TABLE IF NOT EXISTS building_mgmt.floors (
     floor_id     text PRIMARY KEY,                       -- 沿用現有 FLR-uuid5
     building_id  text NOT NULL
-                 REFERENCES building.buildings(building_id) ON DELETE CASCADE,
+                 REFERENCES building_mgmt.buildings(building_id) ON DELETE CASCADE,
     floor_name   text NOT NULL,
     floor_weight numeric(12,3),                          -- 前端 getFloorWeight() 的排序權重
 
-    status building.floor_status NOT NULL DEFAULT '已成廠',
+    status building_mgmt.floor_status NOT NULL DEFAULT '已成廠',
 
     -- 年份保留兩份：raw 給畫面顯示（現況／Y26／2026 三種寫法都可能），
     -- num 給查詢與統計用。num 由應用程式的 _parse_year() 寫入，不做成
@@ -106,18 +106,18 @@ CREATE TABLE IF NOT EXISTS building.floors (
     CONSTRAINT floors_name_not_blank CHECK (btrim(floor_name) <> '')
 );
 
-CREATE INDEX IF NOT EXISTS floors_building_idx ON building.floors (building_id);
-CREATE INDEX IF NOT EXISTS floors_process_idx  ON building.floors (process_name);
-CREATE INDEX IF NOT EXISTS floors_year_idx     ON building.floors (expected_completion_year_num);
+CREATE INDEX IF NOT EXISTS floors_building_idx ON building_mgmt.floors (building_id);
+CREATE INDEX IF NOT EXISTS floors_process_idx  ON building_mgmt.floors (process_name);
+CREATE INDEX IF NOT EXISTS floors_year_idx     ON building_mgmt.floors (expected_completion_year_num);
 
 -- -----------------------------------------------------------------------------
 -- 廠務設施面積明細
 --
 -- 用長表而不是 11 個寬欄位：_facility_value() 實際接受任意 key 的 dict，
--- 長表才是忠實對應。要寬表給 Excel / BI 時，由 building_api 的 view 做 pivot。
+-- 長表才是忠實對應。要寬表給 Excel / BI 時，由 building_mgmt 的 view 做 pivot。
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.floor_facility_areas (
-    floor_id     text NOT NULL REFERENCES building.floors(floor_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS building_mgmt.floor_facility_areas (
+    floor_id     text NOT NULL REFERENCES building_mgmt.floors(floor_id) ON DELETE CASCADE,
     facility_key text NOT NULL,     -- 純水 / 廢水 / 給排水 / 空調 / … / 其他
     area_m2      numeric(14,4) NOT NULL DEFAULT 0,
     PRIMARY KEY (floor_id, facility_key)
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS building.floor_facility_areas (
 -- -----------------------------------------------------------------------------
 -- 製程大群組
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.process_groups (
+CREATE TABLE IF NOT EXISTS building_mgmt.process_groups (
     group_id   text PRIMARY KEY,
     group_name text NOT NULL,
     sort_order integer NOT NULL DEFAULT 0,
@@ -137,20 +137,20 @@ CREATE TABLE IF NOT EXISTS building.process_groups (
 
 -- process_name 直接當 PK：validate_process_groups() 的「一個製程不可重複分群」
 -- 這條規則就由資料庫保證，不必只靠應用層檢查。
-CREATE TABLE IF NOT EXISTS building.process_group_members (
+CREATE TABLE IF NOT EXISTS building_mgmt.process_group_members (
     process_name text PRIMARY KEY,
     group_id     text NOT NULL
-                 REFERENCES building.process_groups(group_id) ON DELETE CASCADE,
+                 REFERENCES building_mgmt.process_groups(group_id) ON DELETE CASCADE,
     sort_order   integer NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS process_group_members_group_idx
-    ON building.process_group_members (group_id);
+    ON building_mgmt.process_group_members (group_id);
 
 -- -----------------------------------------------------------------------------
 -- 電力／用水需求趨勢
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.utility_metrics (
+CREATE TABLE IF NOT EXISTS building_mgmt.utility_metrics (
     metric_key       text PRIMARY KEY,          -- power_demand / water_demand
     metric_name      text NOT NULL,
     unit             text NOT NULL DEFAULT '',  -- kW / CMD
@@ -160,9 +160,9 @@ CREATE TABLE IF NOT EXISTS building.utility_metrics (
     sort_order       integer NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS building.utility_metric_points (
+CREATE TABLE IF NOT EXISTS building_mgmt.utility_metric_points (
     metric_key  text NOT NULL
-                REFERENCES building.utility_metrics(metric_key) ON DELETE CASCADE,
+                REFERENCES building_mgmt.utility_metrics(metric_key) ON DELETE CASCADE,
     year_key    text NOT NULL,                  -- current / Y26 / Y27
     year_label  text NOT NULL,
     value       numeric(18,4) NOT NULL DEFAULT 0,
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS building.utility_metric_points (
 -- 小型設定（trend_reference 的比較基準棟、display_settings 等）
 -- 這類設定結構零散、筆數個位數，各開一張表不划算，統一放 key/value。
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.app_settings (
+CREATE TABLE IF NOT EXISTS building_mgmt.app_settings (
     setting_key text PRIMARY KEY,
     value       jsonb NOT NULL,
     updated_at  timestamptz NOT NULL DEFAULT now(),
@@ -191,17 +191,17 @@ CREATE TABLE IF NOT EXISTS building.app_settings (
 -- -----------------------------------------------------------------------------
 DO $$ BEGIN
     -- enum 的宣告順序就是排序順序，剛好等於 get_user_role() 的 admin > user > viewer 優先序
-    CREATE TYPE building.user_role AS ENUM ('admin', 'user', 'viewer');
+    CREATE TYPE building_mgmt.user_role AS ENUM ('admin', 'user', 'viewer');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
-CREATE TABLE IF NOT EXISTS building.user_roles (
+CREATE TABLE IF NOT EXISTS building_mgmt.user_roles (
     identity_key text PRIMARY KEY,               -- normalize_identity() 後的完整值（小寫）
     account_key  text GENERATED ALWAYS AS (
                      regexp_replace(regexp_replace(identity_key, '^.*\\', ''), '@.*$', '')
                  ) STORED,                       -- 去掉 網域\ 前綴與 @網域 後綴
     display_name text NOT NULL DEFAULT '',
-    role         building.user_role NOT NULL,
+    role         building_mgmt.user_role NOT NULL,
     is_active    boolean NOT NULL DEFAULT true,
     note         text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -211,15 +211,15 @@ CREATE TABLE IF NOT EXISTS building.user_roles (
 );
 
 CREATE INDEX IF NOT EXISTS user_roles_account_idx
-    ON building.user_roles (account_key) WHERE is_active;
+    ON building_mgmt.user_roles (account_key) WHERE is_active;
 
-CREATE TABLE IF NOT EXISTS building.user_role_changes (
+CREATE TABLE IF NOT EXISTS building_mgmt.user_role_changes (
     change_id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     changed_at   timestamptz NOT NULL DEFAULT now(),
     changed_by   text NOT NULL,
     identity_key text NOT NULL,
-    role_before  building.user_role,
-    role_after   building.user_role,
+    role_before  building_mgmt.user_role,
+    role_after   building_mgmt.user_role,
     reason       text NOT NULL DEFAULT ''
 );
 
@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS building.user_role_changes (
 -- 影響 0 列 → 有人搶先改過 → 回 409。
 -- 這個 UPDATE 取得的 row lock 同時序列化了後續所有寫入，不需要額外的 advisory lock。
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.dataset_state (
+CREATE TABLE IF NOT EXISTS building_mgmt.dataset_state (
     id             smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     revision       text NOT NULL,
     building_count integer NOT NULL DEFAULT 0,
@@ -243,14 +243,14 @@ CREATE TABLE IF NOT EXISTS building.dataset_state (
 
 -- 空資料集的 revision = dataset_revision([]) = sha256('[]')。
 -- 預先放進去，第一次開啟維護畫面時 GET 回傳的 revision 才對得上。
-INSERT INTO building.dataset_state (id, revision, building_count, floor_count, updated_by)
+INSERT INTO building_mgmt.dataset_state (id, revision, building_count, floor_count, updated_by)
 VALUES (1, '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945', 0, 0, 'system')
 ON CONFLICT (id) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
 -- 版本快照（取代 data_backups/*.json）
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.dataset_snapshots (
+CREATE TABLE IF NOT EXISTS building_mgmt.dataset_snapshots (
     revision   text PRIMARY KEY,
     doc        jsonb NOT NULL,        -- normalize_dataset() 後的整包資料
     counts     jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS building.dataset_snapshots (
 -- -----------------------------------------------------------------------------
 -- 異動稽核（取代 data_changes.json）
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.data_change_log (
+CREATE TABLE IF NOT EXISTS building_mgmt.data_change_log (
     change_id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     changed_at       timestamptz NOT NULL DEFAULT now(),
     effective_date   date NOT NULL,
@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS building.data_change_log (
 );
 
 CREATE INDEX IF NOT EXISTS data_change_log_changed_at_idx
-    ON building.data_change_log (changed_at DESC);
+    ON building_mgmt.data_change_log (changed_at DESC);
 
 -- -----------------------------------------------------------------------------
 -- 存取紀錄（取代 access_log.txt）
@@ -288,7 +288,7 @@ CREATE INDEX IF NOT EXISTS data_change_log_changed_at_idx
 -- 按月分割：舊資料直接 DETACH + DROP，不會無限長大。
 -- 另備一個 DEFAULT 分割，萬一分割沒先建好也不會讓寫入失敗。
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.access_log (
+CREATE TABLE IF NOT EXISTS building_mgmt.access_log (
     log_id       bigint GENERATED ALWAYS AS IDENTITY,
     logged_at    timestamptz NOT NULL DEFAULT now(),
     username     text NOT NULL DEFAULT '',
@@ -300,14 +300,14 @@ CREATE TABLE IF NOT EXISTS building.access_log (
     PRIMARY KEY (log_id, logged_at)
 ) PARTITION BY RANGE (logged_at);
 
-CREATE TABLE IF NOT EXISTS building.access_log_default
-    PARTITION OF building.access_log DEFAULT;
+CREATE TABLE IF NOT EXISTS building_mgmt.access_log_default
+    PARTITION OF building_mgmt.access_log DEFAULT;
 
 CREATE INDEX IF NOT EXISTS access_log_logged_at_idx
-    ON building.access_log (logged_at DESC);
+    ON building_mgmt.access_log (logged_at DESC);
 
 -- 建立（或補建）某個月份的分割。排程或部署腳本可以直接呼叫。
-CREATE OR REPLACE FUNCTION building.ensure_access_log_partition(target date)
+CREATE OR REPLACE FUNCTION building_mgmt.ensure_access_log_partition(target date)
 RETURNS text
 LANGUAGE plpgsql
 AS $$
@@ -316,9 +316,9 @@ DECLARE
     period_end   date := (date_trunc('month', target) + interval '1 month')::date;
     part_name    text := format('access_log_%s', to_char(period_start, 'YYYYMM'));
 BEGIN
-    IF to_regclass(format('building.%I', part_name)) IS NULL THEN
+    IF to_regclass(format('building_mgmt.%I', part_name)) IS NULL THEN
         EXECUTE format(
-            'CREATE TABLE building.%I PARTITION OF building.access_log
+            'CREATE TABLE building_mgmt.%I PARTITION OF building_mgmt.access_log
                  FOR VALUES FROM (%L) TO (%L)',
             part_name, period_start, period_end
         );
@@ -328,8 +328,8 @@ END;
 $$;
 
 -- 先把本月與下個月備好
-SELECT building.ensure_access_log_partition(CURRENT_DATE);
-SELECT building.ensure_access_log_partition((CURRENT_DATE + interval '1 month')::date);
+SELECT building_mgmt.ensure_access_log_partition(CURRENT_DATE);
+SELECT building_mgmt.ensure_access_log_partition((CURRENT_DATE + interval '1 month')::date);
 
 -- -----------------------------------------------------------------------------
 -- 欄位字典
@@ -338,7 +338,7 @@ SELECT building.ensure_access_log_partition((CURRENT_DATE + interval '1 month'):
 -- 由 scripts/run_migrations.py 在套用 migration 之後同步進來。
 -- 這樣 Excel 匯出與外部 BI 看到的是同一份說明，不會各自漂移。
 -- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS building.data_dictionary (
+CREATE TABLE IF NOT EXISTS building_mgmt.data_dictionary (
     object_name  text NOT NULL,      -- 對應的 view / sheet 名稱
     field_name   text NOT NULL,
     description  text NOT NULL,

@@ -180,10 +180,10 @@ def applied_migrations():
     """已套用的 migration 版本清單。找不到表時回傳空 list。"""
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('building.schema_migrations')")
+            cur.execute("SELECT to_regclass('building_mgmt.schema_migrations')")
             if cur.fetchone()[0] is None:
                 return []
             cur.execute(
-                "SELECT version FROM building.schema_migrations ORDER BY version"
+                "SELECT version FROM building_mgmt.schema_migrations ORDER BY version"
             )
             return [row[0] for row in cur.fetchall()]

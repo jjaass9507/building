@@ -90,8 +90,8 @@ CHANGE_TYPE_LABELS = {
 # 欄位字典的唯一定義處。
 #
 # 這一份同時餵兩個地方：標準資料版 Excel 的 data_dictionary 工作表，
-# 以及資料庫的 building.data_dictionary 表（由 scripts/run_migrations.py 同步過去，
-# 再經 building_api.v_data_dictionary 提供給外部 BI）。
+# 以及資料庫的 building_mgmt.data_dictionary 表（由 scripts/run_migrations.py 同步過去，
+# 再經 building_mgmt.v_data_dictionary 提供給外部 BI）。
 # 兩邊都從這裡長出來，才不會各自漂移。
 #
 # 欄位順序：物件名稱、欄位、說明、型別、規則或單位、排序
@@ -532,7 +532,7 @@ def build_standard_workbook(
     """匯出標準資料版 Excel。
 
     dictionary_rows 不給時用 DATA_DICTIONARY_ROWS；資料來源是 PostgreSQL 時，
-    app.py 會改傳資料庫 building.data_dictionary 的內容，
+    app.py 會改傳資料庫 building_mgmt.data_dictionary 的內容，
     這樣 DBA 在資料庫端補的說明也會反映到匯出檔。
     """
     normalized = normalize_dataset(deepcopy(data))
