@@ -87,6 +87,46 @@ CHANGE_TYPE_LABELS = {
     "IMPORT": "Excel 匯入",
 }
 
+# 欄位字典的唯一定義處。
+#
+# 這一份同時餵兩個地方：標準資料版 Excel 的 data_dictionary 工作表，
+# 以及資料庫的 building.data_dictionary 表（由 scripts/run_migrations.py 同步過去，
+# 再經 building_api.v_data_dictionary 提供給外部 BI）。
+# 兩邊都從這裡長出來，才不會各自漂移。
+#
+# 欄位順序：物件名稱、欄位、說明、型別、規則或單位、排序
+# 物件名稱用不帶 v_ 前綴的邏輯名稱，對應 Excel 工作表名與資料庫 view 名。
+DATA_DICTIONARY_ROWS = [
+    ("building_master", "building_id", "建物穩定識別碼", "string", "required", 10),
+    ("building_master", "building_code", "棟別名稱／代碼", "string", "required", 20),
+    ("building_master", "site_area_m2", "基地面積", "number", "m2", 30),
+    ("building_master", "floor_area_ratio", "容積率", "number", "比值", 40),
+    ("building_master", "building_coverage_ratio", "建蔽率", "number", "比值", 50),
+    ("floor_area_detail", "floor_id", "樓層穩定識別碼", "string", "required", 10),
+    ("floor_area_detail", "building_id", "所屬建物識別碼", "string", "required", 20),
+    ("floor_area_detail", "floor_name", "樓層名稱", "string", "required", 30),
+    ("floor_area_detail", "status", "資料狀態", "string", "已成廠／未成廠", 40),
+    ("floor_area_detail", "expected_completion_year", "預計成廠年份", "string", "現況、Y1 或西元年", 50),
+    ("floor_area_detail", "floor_height_cm", "樓層高度原始內容", "string", "保留來源文字", 60),
+    ("floor_area_detail", "cleanroom_clear_height_cm", "無塵室淨高原始內容", "string", "保留來源文字", 70),
+    ("floor_area_detail", "floor_area_m2", "樓地板面積", "number", "m2", 80),
+    ("floor_area_detail", "cleanroom_area_m2", "無塵室面積", "number", "m2", 90),
+    ("floor_area_detail", "production_support_area_m2", "生產週邊面積", "number", "m2", 100),
+    ("floor_area_detail", "public_area_m2", "公設（含其他）面積", "number", "m2", 110),
+    ("floor_area_detail", "facility_area_m2", "廠務設施面積合計", "number", "m2", 120),
+    ("floor_area_detail", "floor_load_kgf_m2", "樓層載重", "number", "kgf/m2", 130),
+    ("change_log", "effective_date", "資料異動生效日期", "date", "YYYY-MM-DD", 10),
+    ("change_log", "change_type", "資料異動類型", "string",
+     "ADD／ADJUST／EXPAND／REDUCE／DEMOLISH／IMPORT", 20),
+    ("annual_growth", "year_label", "年份標籤", "string", "現況／Y26／2026", 10),
+    ("annual_growth", "added_area_m2", "該年度新增樓地板面積", "number", "m2", 20),
+    ("annual_growth", "cumulative_area_m2", "期末累積樓地板面積", "number", "m2", 30),
+    ("annual_growth", "growth_rate", "年增率", "number", "期初為 0 時為 NULL", 40),
+    ("process_group_area", "group_name", "製程大群組名稱", "string", "未分群時為「未分群」", 10),
+    ("process_group_area", "process_name", "製程名稱", "string", "空白時為「非製程」", 20),
+    ("process_group_area", "floor_area_m2", "該群組樓地板面積合計", "number", "m2", 30),
+]
+
 
 class BuildingDataError(ValueError):
     pass
@@ -487,7 +527,14 @@ def build_standard_workbook(
     data: List[Dict[str, Any]],
     exported_by: str,
     audit_records: List[Dict[str, Any]] = None,
+    dictionary_rows: List[Any] = None,
 ) -> BytesIO:
+    """匯出標準資料版 Excel。
+
+    dictionary_rows 不給時用 DATA_DICTIONARY_ROWS；資料來源是 PostgreSQL 時，
+    app.py 會改傳資料庫 building.data_dictionary 的內容，
+    這樣 DBA 在資料庫端補的說明也會反映到匯出檔。
+    """
     normalized = normalize_dataset(deepcopy(data))
     workbook = Workbook()
     workbook.remove(workbook.active)
@@ -550,21 +597,14 @@ def build_standard_workbook(
         ])
     _write_simple_sheet(workbook, "change_log", change_headers, change_rows)
 
-    dictionary_rows = [
-        ["building_master", "building_id", "建物穩定識別碼", "string", "required"],
-        ["building_master", "building_code", "棟別名稱／代碼", "string", "required"],
-        ["building_master", "site_area_m2", "基地面積", "number", "m2"],
-        ["floor_area_detail", "floor_id", "樓層穩定識別碼", "string", "required"],
-        ["floor_area_detail", "building_id", "所屬建物識別碼", "string", "required"],
-        ["floor_area_detail", "floor_height_cm", "樓層高度原始內容", "string", "保留來源文字"],
-        ["floor_area_detail", "cleanroom_clear_height_cm", "無塵室淨高原始內容", "string", "保留來源文字"],
-        ["floor_area_detail", "floor_area_m2", "樓地板面積", "number", "m2"],
-        ["floor_area_detail", "expected_completion_year", "預計成廠年份", "string", "現況、Y1 或西元年"],
-        ["floor_area_detail", "status", "資料狀態", "string", "已成廠／未成廠"],
-        ["change_log", "effective_date", "資料異動生效日期", "date", "YYYY-MM-DD"],
-        ["change_log", "change_type", "資料異動類型", "string", "ADD／ADJUST／EXPAND／REDUCE／DEMOLISH"],
-    ]
-    _write_simple_sheet(workbook, "data_dictionary", ["sheet", "field", "description", "type", "rule_or_unit"], dictionary_rows)
+    # 只列出這份 Excel 實際有的工作表；資料庫 view 專屬的物件不放進來
+    sheet_names = {"building_master", "floor_area_detail", "change_log"}
+    rows = dictionary_rows if dictionary_rows is not None else DATA_DICTIONARY_ROWS
+    _write_simple_sheet(
+        workbook, "data_dictionary",
+        ["sheet", "field", "description", "type", "rule_or_unit"],
+        [list(row[:5]) for row in rows if row[0] in sheet_names],
+    )
 
     output = BytesIO()
     workbook.save(output)

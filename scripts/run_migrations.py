@@ -66,6 +66,20 @@ def applied_state(conn):
         return dict(cur.fetchall())
 
 
+def _sync_data_dictionary():
+    """把程式裡的欄位字典推到資料庫。
+
+    欄位字典的唯一定義處是 building_data_manager.DATA_DICTIONARY_ROWS。
+    migration 只建表不塞資料，內容一律由這裡同步，
+    這樣 Excel 匯出與外部 BI 看到的是同一份說明。
+    """
+    from building_data_manager import DATA_DICTIONARY_ROWS
+    from store import pg_store
+
+    count = pg_store.sync_data_dictionary(DATA_DICTIONARY_ROWS)
+    _log(f"欄位字典已同步 {count} 筆到 building.data_dictionary。")
+
+
 def main():
     parser = argparse.ArgumentParser(description='套用 PostgreSQL migration')
     parser.add_argument('--list', action='store_true', help='只顯示每個 migration 的狀態')
@@ -117,6 +131,8 @@ def main():
             if not pending:
                 _log('')
                 _log("沒有需要套用的 migration。")
+                # 字典內容改過但 schema 沒動時，重跑這支腳本就能把新說明推上去
+                _sync_data_dictionary()
                 return 0
             if args.dry_run:
                 _log('')
@@ -140,6 +156,7 @@ def main():
 
         _log('')
         _log(f"結果：已套用 {len(pending)} 個 migration。")
+        _sync_data_dictionary()
         return 0
 
     except db.DatabaseNotConfigured as exc:

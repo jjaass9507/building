@@ -334,8 +334,9 @@ SELECT building.ensure_access_log_partition((CURRENT_DATE + interval '1 month'):
 -- -----------------------------------------------------------------------------
 -- 欄位字典
 --
--- build_standard_workbook() 裡原本手寫的 dictionary_rows 移到這裡當單一真實來源：
--- Excel 匯出查這張表，外部 BI 也看得到同一份說明。
+-- 內容不寫在這裡：唯一定義處是 building_data_manager.DATA_DICTIONARY_ROWS，
+-- 由 scripts/run_migrations.py 在套用 migration 之後同步進來。
+-- 這樣 Excel 匯出與外部 BI 看到的是同一份說明，不會各自漂移。
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS building.data_dictionary (
     object_name  text NOT NULL,      -- 對應的 view / sheet 名稱
@@ -346,38 +347,5 @@ CREATE TABLE IF NOT EXISTS building.data_dictionary (
     sort_order   integer NOT NULL DEFAULT 0,
     PRIMARY KEY (object_name, field_name)
 );
-
-INSERT INTO building.data_dictionary
-    (object_name, field_name, description, data_type, rule_or_unit, sort_order)
-VALUES
-    ('v_building_master',   'building_id',                  '建物穩定識別碼',       'string', 'required',        10),
-    ('v_building_master',   'building_code',                '棟別名稱／代碼',       'string', 'required',        20),
-    ('v_building_master',   'site_area_m2',                 '基地面積',             'number', 'm2',              30),
-    ('v_building_master',   'floor_area_ratio',             '容積率',               'number', '比值',            40),
-    ('v_building_master',   'building_coverage_ratio',      '建蔽率',               'number', '比值',            50),
-    ('v_floor_area_detail', 'floor_id',                     '樓層穩定識別碼',       'string', 'required',        10),
-    ('v_floor_area_detail', 'building_id',                  '所屬建物識別碼',       'string', 'required',        20),
-    ('v_floor_area_detail', 'floor_name',                   '樓層名稱',             'string', 'required',        30),
-    ('v_floor_area_detail', 'status',                       '資料狀態',             'string', '已成廠／未成廠',  40),
-    ('v_floor_area_detail', 'expected_completion_year',     '預計成廠年份',         'string', '現況、Y1 或西元年', 50),
-    ('v_floor_area_detail', 'floor_height_cm',              '樓層高度原始內容',     'string', '保留來源文字',    60),
-    ('v_floor_area_detail', 'cleanroom_clear_height_cm',    '無塵室淨高原始內容',   'string', '保留來源文字',    70),
-    ('v_floor_area_detail', 'floor_area_m2',                '樓地板面積',           'number', 'm2',              80),
-    ('v_floor_area_detail', 'cleanroom_area_m2',            '無塵室面積',           'number', 'm2',              90),
-    ('v_floor_area_detail', 'production_support_area_m2',   '生產週邊面積',         'number', 'm2',             100),
-    ('v_floor_area_detail', 'public_area_m2',               '公設（含其他）面積',   'number', 'm2',             110),
-    ('v_floor_area_detail', 'facility_area_m2',             '廠務設施面積合計',     'number', 'm2',             120),
-    ('v_floor_area_detail', 'floor_load_kgf_m2',            '樓層載重',             'number', 'kgf/m2',         130),
-    ('v_change_log',        'effective_date',               '資料異動生效日期',     'date',   'YYYY-MM-DD',      10),
-    ('v_change_log',        'change_type',                  '資料異動類型',         'string', 'ADD／ADJUST／EXPAND／REDUCE／DEMOLISH／IMPORT', 20),
-    ('v_annual_growth',     'year_label',                   '年份標籤',             'string', '現況／Y26／2026',  10),
-    ('v_annual_growth',     'added_area_m2',                '該年度新增樓地板面積', 'number', 'm2',              20),
-    ('v_annual_growth',     'cumulative_area_m2',           '期末累積樓地板面積',   'number', 'm2',              30),
-    ('v_annual_growth',     'growth_rate',                  '年增率',               'number', '期初為 0 時為 NULL', 40)
-ON CONFLICT (object_name, field_name) DO UPDATE
-   SET description  = EXCLUDED.description,
-       data_type    = EXCLUDED.data_type,
-       rule_or_unit = EXCLUDED.rule_or_unit,
-       sort_order   = EXCLUDED.sort_order;
 
 COMMIT;

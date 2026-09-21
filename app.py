@@ -1025,7 +1025,8 @@ def export_building_data(export_mode):
             filename = f"建物面積_人員閱讀版_{timestamp}.xlsx"
             action = 'Export Readable Building Data'
         else:
-            workbook = build_standard_workbook(data, username, store.load_audit_records())
+            workbook = build_standard_workbook(
+                data, username, store.load_audit_records(), store.load_data_dictionary())
             filename = f"建物面積_標準資料版_{timestamp}.xlsx"
             action = 'Export Standard Building Data'
 

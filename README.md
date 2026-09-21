@@ -628,6 +628,20 @@ store/
 外部 BI 只看得到 `building_api`，連內部表的存在都看不到，
 這樣內部結構怎麼重構都不會打壞別人的報表。
 
+### 欄位字典
+
+欄位說明只定義在 `building_data_manager.DATA_DICTIONARY_ROWS` 一處，由
+`scripts/run_migrations.py` 同步到 `building.data_dictionary`，再經
+`building_api.v_data_dictionary` 提供給外部查詢（該 view 會一併給出對應的
+完整 view 名稱，外部不用自己拼）。
+
+- 標準資料版 Excel 的 `data_dictionary` 工作表在 `postgres` 模式下**讀資料庫那張表**，
+  所以 DBA 在資料庫端補的說明會直接反映到匯出檔，不必改程式。
+- `json` 模式（或資料庫讀不到時）退回程式裡的定義，匯出不會因此失敗。
+- 要新增或修改說明：改 `DATA_DICTIONARY_ROWS`，再重跑一次
+  `.\scripts\run-migrations.ps1`（schema 沒變動時也會同步字典）。
+- migration 只建表不塞資料，就是為了避免 SQL 裡再存一份而各自漂移。
+
 ### 本機開發環境（免安裝版，不需要 Docker）
 
 與專案既有的 PortablePython 做法一致：用 binaries zip，不需要管理員權限，

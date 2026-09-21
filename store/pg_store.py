@@ -871,6 +871,71 @@ def append_access_log(username, action, client_ip=None, detail='', identity_key=
         )
 
 
+# =============================================================================
+# 欄位字典
+# =============================================================================
+
+def load_data_dictionary() -> List[tuple]:
+    """回傳欄位字典，格式與 DATA_DICTIONARY_ROWS 相同。"""
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT object_name, field_name, description, data_type, rule_or_unit, sort_order
+                FROM building.data_dictionary
+                ORDER BY object_name, sort_order, field_name
+                """
+            )
+            return [tuple(row) for row in cur.fetchall()]
+
+
+def sync_data_dictionary(rows) -> int:
+    """把程式裡的欄位字典同步到資料庫，回傳同步的筆數。
+
+    定義只寫在 building_data_manager.DATA_DICTIONARY_ROWS 一處，
+    這裡負責把它推到資料庫，供 building_api.v_data_dictionary 給外部查詢。
+    程式裡已經沒有的項目會一併刪掉，避免留下過期說明。
+    """
+    payload = [
+        {
+            'object_name': row[0], 'field_name': row[1], 'description': row[2],
+            'data_type': row[3], 'rule_or_unit': row[4],
+            'sort_order': row[5] if len(row) > 5 else 0,
+        }
+        for row in rows
+    ]
+    with db.transaction() as cur:
+        if payload:
+            cur.execute(
+                """
+                INSERT INTO building.data_dictionary
+                    (object_name, field_name, description, data_type, rule_or_unit, sort_order)
+                SELECT * FROM jsonb_to_recordset(%(payload)s) AS x(
+                    object_name text, field_name text, description text,
+                    data_type text, rule_or_unit text, sort_order integer
+                )
+                ON CONFLICT (object_name, field_name) DO UPDATE
+                   SET description  = EXCLUDED.description,
+                       data_type    = EXCLUDED.data_type,
+                       rule_or_unit = EXCLUDED.rule_or_unit,
+                       sort_order   = EXCLUDED.sort_order
+                """,
+                {'payload': Jsonb(payload)},
+            )
+        cur.execute(
+            """
+            DELETE FROM building.data_dictionary d
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM jsonb_to_recordset(%(payload)s)
+                     AS x(object_name text, field_name text)
+                  WHERE x.object_name = d.object_name AND x.field_name = d.field_name
+             )
+            """,
+            {'payload': Jsonb(payload)},
+        )
+    return len(payload)
+
+
 def ensure_access_log_partitions(months_ahead: int = 1) -> List[str]:
     """補建本月起算的月份分割，回傳分割表名稱。部署與排程可直接呼叫。"""
     created = []
@@ -892,5 +957,6 @@ __all__ = [
     'load_trend_reference', 'write_trend_reference',
     'load_utility_trends', 'write_utility_trends',
     'load_permissions', 'write_permissions', 'find_role',
+    'load_data_dictionary', 'sync_data_dictionary',
     'append_access_log', 'ensure_access_log_partitions',
 ]

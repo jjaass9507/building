@@ -19,6 +19,7 @@ Phase 3 確認穩定後設成 `false` 即可停掉。
 import logging
 import os
 
+import building_data_manager
 from db import backend_name
 from . import json_store
 
@@ -28,7 +29,7 @@ __all__ = [
     'load_process_groups', 'write_process_groups', 'backup_process_groups',
     'load_trend_reference', 'write_trend_reference', 'backup_trend_reference',
     'load_utility_trends', 'write_utility_trends', 'backup_utility_trends',
-    'load_permissions',
+    'load_permissions', 'load_data_dictionary',
 ]
 
 
@@ -216,6 +217,27 @@ def backup_trend_reference(username):
     if use_postgres() and not mirror_json():
         return None
     return json_store.backup_trend_reference(username)
+
+
+# =============================================================================
+# 欄位字典
+# =============================================================================
+
+def load_data_dictionary():
+    """欄位字典，格式與 building_data_manager.DATA_DICTIONARY_ROWS 相同。
+
+    定義本身只寫在程式裡一處；資料庫那份是由 scripts/run_migrations.py 同步過去的。
+    這裡在 postgres 模式下讀資料庫，是為了讓 DBA 在資料庫端補的說明
+    也能反映到 Excel 匯出，不必改程式。讀不到就退回程式裡的定義。
+    """
+    if use_postgres():
+        try:
+            rows = _pg().load_data_dictionary()
+            if rows:
+                return rows
+        except Exception:  # noqa: BLE001 - 字典讀不到不該讓匯出失敗
+            logging.exception("讀取資料庫欄位字典失敗，改用程式內建的定義")
+    return building_data_manager.DATA_DICTIONARY_ROWS
 
 
 # =============================================================================

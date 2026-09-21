@@ -193,7 +193,14 @@ FROM building.data_change_log c;
 -- 欄位字典（給外部團隊查，不用來問我們欄位是什麼意思）
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW building_api.v_data_dictionary AS
-SELECT object_name, field_name, description, data_type, rule_or_unit
+SELECT
+    object_name,
+    -- 對外查詢時直接給得出完整的 view 名稱，不用自己拼
+    'building_api.v_' || object_name AS view_name,
+    field_name,
+    description,
+    data_type,
+    rule_or_unit
 FROM building.data_dictionary
 ORDER BY object_name, sort_order, field_name;
 
