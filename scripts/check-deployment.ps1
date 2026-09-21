@@ -618,6 +618,10 @@ try {
 }
 
 # 12. 對外 CDN 連線 (前端依賴)
+#
+# 注意：這些 CDN 是「使用者的瀏覽器」去載入的，不是這台 Server。
+# Server 連不到外網不代表畫面會壞 —— 真正要確認的是使用者端能不能連到。
+# 這裡測 Server 端只是拿來當「這個環境是否對外封閉」的粗略指標。
 $cdnHosts = @('cdn.tailwindcss.com', 'unpkg.com', 'cdn.jsdelivr.net')
 foreach ($h in $cdnHosts) {
     try {
@@ -625,7 +629,11 @@ foreach ($h in $cdnHosts) {
         if ($test.TcpTestSucceeded) {
             Add-Result -Status PASS -Check "可連線 CDN: $h"
         } else {
-            Add-Result -Status WARN -Check "可連線 CDN: $h" -Detail "連線失敗，若此環境無法連外網，前端畫面會壞掉，需改成本地化資源"
+            Add-Result -Status WARN -Check "可連線 CDN: $h" `
+                -Detail ("Server 連不到（內網環境本來就會這樣，不影響部署）。`n" +
+                         "       這些資源是使用者的瀏覽器去載入的，請改用一台一般使用者的電腦`n" +
+                         "       開啟平台確認畫面正常。若使用者端也連不到，前端樣式與圖示會壞掉，`n" +
+                         "       需要把 Tailwind / Lucide / Chart.js / xlsx 改成本地化資源。")
         }
     } catch {
         Add-Result -Status WARN -Check "可連線 CDN: $h" -Detail $_.Exception.Message

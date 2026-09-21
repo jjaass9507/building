@@ -489,9 +489,23 @@ if ($Offline) {
     }
     & $venvPip install --no-index --find-links=$wheelsDir -r $requirements
 } else {
+    # 內網機器沒帶 -Offline 的話，pip 會卡在連 PyPI 直到逾時，錯誤訊息也看不出原因
+    if (Test-Path (Join-Path $AppRoot 'wheels')) {
+        Write-Warn '偵測到 wheels\ 目錄，但沒有指定 -Offline，這次會嘗試連 PyPI 安裝。'
+        Write-Warn '若這台機器連不到外網，請中斷並改用：.\scripts\deploy-iis.ps1 -Offline ...'
+    }
     & $venvPip install -r $requirements
 }
-if ($LASTEXITCODE -ne 0) { Stop-Deploy '套件安裝失敗，請看上方 pip 的輸出。' }
+if ($LASTEXITCODE -ne 0) {
+    if (-not $Offline -and (Test-Path (Join-Path $AppRoot 'wheels'))) {
+        Stop-Deploy @"
+套件安裝失敗。這台機器有 wheels\ 目錄，看起來是要走離線安裝，請改用：
+
+    .\scripts\deploy-iis.ps1 -Offline ...（其餘參數照舊）
+"@
+    }
+    Stop-Deploy '套件安裝失敗，請看上方 pip 的輸出。'
+}
 Write-Ok '套件安裝完成'
 
 if (-not (Test-Path $waitressExe)) {
