@@ -81,8 +81,9 @@ building/
 │   ├── json_store.py          # 地端 JSON 檔案
 │   └── pg_store.py            # PostgreSQL（回傳結構與 JSON 檔完全相同）
 ├── scripts/
-│   ├── deploy-iis.ps1         # IIS 部署（獨立網站或子應用程式）
+│   ├── deploy-iis.ps1         # IIS 部署（獨立網站或子應用程式，支援 -WhatIfOnly 預演）
 │   ├── switch-site.ps1        # 正式切換：把線上網址改指到新版，失敗自動回退
+│   ├── build-offline-bundle.ps1  # 在開發機產生 wheels\ 並驗證離線可裝
 │   ├── run-migrations.ps1     # 套用 schema、匯入資料與 hash 驗收
 │   ├── run_migrations.py      # migration 執行器
 │   ├── migrate_json_to_pg.py  # 地端 JSON → PostgreSQL 匯入與驗收
@@ -894,17 +895,49 @@ venv 在建立時會寫死 Python 的絕對路徑，**複製或搬移 venv 到�
 （`Fatal error in launcher: Unable to create process ...`）。因此搬移的是原始碼與
 `wheels/`，venv 一律在部署機的最終路徑重建。
 
-開發機打包（Python 版本必須與部署機相同）：
+#### 1. 開發機打包（可連網的機器）
 
 ```powershell
-pip download -r requirements.txt -d wheels `
-    --platform win_amd64 --python-version 3.11 --only-binary=:all:
+# 先在部署機確認 Python 版本
+python --version
+
+# 回到開發機，用相同版本打包
+.\scripts\build-offline-bundle.ps1 -PythonVersion 3.11 -Zip
 ```
 
-部署機安裝：
+腳本會下載 `win_amd64` 的預編譯 wheel，然後**實際驗證一次**：建立暫時 venv、
+用 `--no-index` 從 `wheels\` 裝起來、跑 `pip check`、再 import 一次所有套件。
+
+這一步很重要 —— 打包完卻在內網部署機才發現少一個相依套件，是離線部署最常見的坑。
+（本機 Python 版本與 `-PythonVersion` 不同時會自動略過驗證並提醒。）
+
+`-Zip` 會另外產生一個可搬運的壓縮檔，已排除 `venv\`、`.env` 與各執行期資料夾。
+
+**Python 版本必須一致**：wheel 分版本（cp311、cp312…），
+`psycopg`、`pandas`、`numpy` 含 C extension，版本不符就裝不起來。
+
+#### 2. 還要手動帶進內網的東西
+
+腳本抓不到這兩個，要自己下載：
+
+| 項目 | 來源 |
+|---|---|
+| Python 的 Windows 安裝程式 | <https://www.python.org/downloads/windows/>（務必勾 Install for all users） |
+| HttpPlatformHandler v2.0 MSI | <https://www.iis.net/downloads/microsoft/httpplatformhandler> |
+
+#### 3. 部署機安裝
 
 ```powershell
-.\scripts\deploy-iis.ps1 -Offline
+.\scripts\deploy-iis.ps1 -Offline `
+    -AppRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform_v2"
+```
+
+日後只更新套件（venv 不用重建）：
+
+```powershell
+.\venv\Scripts\pip install --no-index --find-links=wheels -r requirements.txt
 ```
 
 ### 逐項檢查清單
