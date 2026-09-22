@@ -1,6 +1,5 @@
 import sys
 import os
-import shutil
 import secrets
 import base64
 import struct
@@ -15,15 +14,14 @@ from werkzeug.utils import secure_filename
 from data_processor import DataProcessError, process_excel_file
 from building_data_manager import (
     BuildingDataError,
-    append_audit_record,
     build_readable_workbook,
     build_standard_workbook,
     dataset_counts,
     dataset_revision,
-    load_audit_records,
     normalize_dataset,
     summarize_changes,
 )
+import store
 
 # --- 1. 路徑處理邏輯 ---
 
@@ -54,6 +52,10 @@ data_changes_file_path = os.path.join(base_dir, 'data_changes.json')
 
 ALLOWED_UPLOAD_EXTENSIONS = {'.xlsx'}
 
+# 存取層要知道 JSON 檔案的實際位置。打包成 EXE 時 base_dir 的推導方式不同，
+# 所以在這裡明確傳進去，不讓 store 自己猜。
+store.configure(base_dir)
+
 print("--------------------------------------------------")
 print(f"目前執行模式: {'打包 EXE' if getattr(sys, 'frozen', False) else 'Python 腳本'}")
 print(f"程式所在位置: {base_dir}")
@@ -62,6 +64,7 @@ print(f"權限設定位置: {permission_file_path}")
 print(f"資料備份位置: {backup_dir}")
 print(f"需求趨勢備份位置: {utility_backup_dir}")
 print(f"Log 紀錄位置: {log_file_path}")
+print(f"資料來源: {store.describe()}")
 print("--------------------------------------------------")
 
 # --- 2. 初始化 Flask ---
@@ -132,16 +135,16 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=12)
 
 class PrefixMiddleware:
     """
-    部署成 IIS 子應用程式 (例如掛在 /building_platform 底下) 時，wfastcgi 傳進來的
+    部署成 IIS 子應用程式 (例如掛在 /building_platform 底下) 時，IIS 轉進來的
     PATH_INFO 會保留應用程式前綴，SCRIPT_NAME 卻是空字串，導致 Flask 拿
     '/building_platform' 去比對只定義在 '/' 的路由，結果每一頁都是 404。
 
     這裡把前綴從 PATH_INFO 搬到 SCRIPT_NAME，Flask 才能正確比對路由，
     url_for() 產生的網址也才會帶上前綴 (static 檔案才不會 404)。
 
-    前綴由 APP_URL_PREFIX 指定；wfastcgi 會把 web.config 的 appSettings
-    放進環境變數，所以在 appSettings 加一行即可：
-        <add key="APP_URL_PREFIX" value="/building_platform" />
+    前綴由環境變數 APP_URL_PREFIX 指定。HttpPlatformHandler 是用
+    web.config 的 environmentVariables 區段傳環境變數，所以加一行即可：
+        <environmentVariable name="APP_URL_PREFIX" value="/building_platform" />
     沒設定時不做任何處理，部署在網站根目錄的環境不受影響。
     """
 
@@ -189,22 +192,8 @@ def load_permissions():
         "viewers": []
     }
 
-    if not os.path.exists(permission_file_path):
-        logging.warning(f"permissions.json not found: {permission_file_path}")
-        return default_permissions
-
     try:
-        with open(permission_file_path, 'r', encoding='utf-8') as f:
-            permissions = json.load(f)
-
-        if not isinstance(permissions, dict):
-            raise ValueError("permissions.json root must be an object")
-
-        return {
-            "admins": permissions.get("admins", []),
-            "users": permissions.get("users", []),
-            "viewers": permissions.get("viewers", [])
-        }
+        return store.load_permissions(default_permissions)
     except Exception as e:
         logging.error(f"Failed to load permissions.json: {e}")
         return default_permissions
@@ -577,35 +566,15 @@ def safe_username(username):
     return secure_filename(username.replace('\\', '_').replace('/', '_')) or 'unknown'
 
 def backup_current_data(username):
-    if not os.path.exists(data_file_path):
-        return None
-
-    ensure_runtime_dirs()
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    backup_filename = f"data_{timestamp}_{safe_username(username)}.json"
-    backup_path = os.path.join(backup_dir, backup_filename)
-    shutil.copy2(data_file_path, backup_path)
-    return backup_path
+    return store.backup_current_data(username)
 
 
 def load_current_data():
-    if not os.path.exists(data_file_path):
-        return []
-    with open(data_file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    if not isinstance(data, list):
-        raise BuildingDataError("data.json 根節點必須是陣列。")
-    return data
-
-
-def write_current_data(data):
-    """以暫存檔原子替換目前資料，避免寫入中斷留下半份 JSON。"""
-    ensure_runtime_dirs()
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    temp_path = os.path.join(processed_dir, f"data_maintenance_pending_{timestamp}.json")
-    with open(temp_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    os.replace(temp_path, data_file_path)
+    try:
+        return store.load_current_data()
+    except ValueError as e:
+        # json_store 不依賴 app 的例外型別，這裡轉回原本的 BuildingDataError
+        raise BuildingDataError(str(e)) from e
 
 def create_default_utility_trends():
     return {
@@ -647,11 +616,7 @@ def create_default_utility_trends():
     }
 
 def load_utility_trends():
-    if not os.path.exists(utility_trends_file_path):
-        return create_default_utility_trends()
-
-    with open(utility_trends_file_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return store.load_utility_trends(create_default_utility_trends())
 
 
 def create_default_process_groups():
@@ -724,18 +689,11 @@ def validate_process_groups(payload):
 
 
 def load_process_groups():
-    if not os.path.exists(process_groups_file_path):
-        return create_default_process_groups()
-    with open(process_groups_file_path, 'r', encoding='utf-8') as handle:
-        return validate_process_groups(json.load(handle))
+    return validate_process_groups(store.load_process_groups(create_default_process_groups()))
 
 
-def write_process_groups(data):
-    ensure_runtime_dirs()
-    temp_path = os.path.join(processed_dir, f"process_groups_pending_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json")
-    with open(temp_path, 'w', encoding='utf-8') as handle:
-        json.dump(data, handle, ensure_ascii=False, indent=2)
-    os.replace(temp_path, process_groups_file_path)
+def write_process_groups(data, username=None):
+    return store.write_process_groups(data, username)
 
 
 def create_default_trend_reference():
@@ -774,18 +732,11 @@ def validate_trend_reference(payload, require_two=False):
 
 
 def load_trend_reference():
-    if not os.path.exists(trend_reference_file_path):
-        return create_default_trend_reference()
-    with open(trend_reference_file_path, 'r', encoding='utf-8') as handle:
-        return validate_trend_reference(json.load(handle))
+    return validate_trend_reference(store.load_trend_reference(create_default_trend_reference()))
 
 
-def write_trend_reference(data):
-    ensure_runtime_dirs()
-    temp_path = os.path.join(processed_dir, f"trend_reference_pending_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json")
-    with open(temp_path, 'w', encoding='utf-8') as handle:
-        json.dump(data, handle, ensure_ascii=False, indent=2)
-    os.replace(temp_path, trend_reference_file_path)
+def write_trend_reference(data, username=None):
+    return store.write_trend_reference(data, username)
 
 def validate_utility_trends(payload):
     if not isinstance(payload, dict):
@@ -812,15 +763,7 @@ def validate_utility_trends(payload):
     return payload
 
 def backup_utility_trends(username):
-    if not os.path.exists(utility_trends_file_path):
-        return None
-
-    ensure_runtime_dirs()
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    backup_filename = f"utility_trends_{timestamp}_{safe_username(username)}.json"
-    backup_path = os.path.join(utility_backup_dir, backup_filename)
-    shutil.copy2(utility_trends_file_path, backup_path)
-    return backup_path
+    return store.backup_utility_trends(username)
 
 # --- 6. 登入相關路由 ---
 
@@ -999,20 +942,18 @@ def save_process_groups():
         data = validate_process_groups(payload)
         data["updated_at"] = datetime.now().isoformat(timespec='seconds')
         data["updated_by"] = username
-        ensure_runtime_dirs()
-        backup_path = None
-        if os.path.exists(process_groups_file_path):
-            backup_name = f"process_groups_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{safe_username(username)}.json"
-            backup_path = os.path.join(process_group_backup_dir, backup_name)
-            shutil.copy2(process_groups_file_path, backup_path)
-        write_process_groups(data)
+        backup_path = store.backup_process_groups(username)
+        mirror_warning = write_process_groups(data, username)
         log_user_access(username, action='Update Process Groups', extra=f"Groups: {len(data['groups'])} | Backup: {backup_path or 'none'}")
-        return jsonify({
+        response = {
             "success": True,
             "message": "製程大群組設定已更新。",
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "data": data
-        })
+        }
+        if mirror_warning:
+            response["warnings"] = [mirror_warning]
+        return jsonify(response)
     except ValueError as e:
         return jsonify({"error": "validation_failed", "message": str(e)}), 400
     except Exception as e:
@@ -1050,20 +991,18 @@ def save_trend_reference():
 
         data["updated_at"] = datetime.now().isoformat(timespec='seconds')
         data["updated_by"] = username
-        ensure_runtime_dirs()
-        backup_path = None
-        if os.path.exists(trend_reference_file_path):
-            backup_name = f"trend_reference_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{safe_username(username)}.json"
-            backup_path = os.path.join(trend_reference_backup_dir, backup_name)
-            shutil.copy2(trend_reference_file_path, backup_path)
-        write_trend_reference(data)
+        backup_path = store.backup_trend_reference(username)
+        mirror_warning = write_trend_reference(data, username)
         log_user_access(username, action='Update Trend Reference', extra=f"Buildings: {', '.join(data['buildings'])} | Backup: {backup_path or 'none'}")
-        return jsonify({
+        response = {
             "success": True,
             "message": "成長趨勢比較基準已更新。",
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "data": data
-        })
+        }
+        if mirror_warning:
+            response["warnings"] = [mirror_warning]
+        return jsonify(response)
     except ValueError as e:
         return jsonify({"error": "validation_failed", "message": str(e)}), 400
     except Exception as e:
@@ -1082,11 +1021,12 @@ def export_building_data(export_mode):
         data = load_current_data()
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         if export_mode == 'readable':
-            workbook = build_readable_workbook(data, load_audit_records(data_changes_file_path), username)
+            workbook = build_readable_workbook(data, store.load_audit_records(), username)
             filename = f"建物面積_人員閱讀版_{timestamp}.xlsx"
             action = 'Export Readable Building Data'
         else:
-            workbook = build_standard_workbook(data, username, load_audit_records(data_changes_file_path))
+            workbook = build_standard_workbook(
+                data, username, store.load_audit_records(), store.load_data_dictionary())
             filename = f"建物面積_標準資料版_{timestamp}.xlsx"
             action = 'Export Standard Building Data'
 
@@ -1114,7 +1054,7 @@ def get_building_data_for_maintenance():
             "data": data,
             "revision": dataset_revision(data),
             "counts": dataset_counts(data),
-            "audit_records": list(reversed(load_audit_records(data_changes_file_path)[-30:]))
+            "audit_records": list(reversed(store.load_audit_records(limit=30)))
         })
     except (BuildingDataError, ValueError) as e:
         return jsonify({"error": "data_validation_failed", "message": str(e)}), 400
@@ -1169,8 +1109,8 @@ def save_building_data_from_maintenance():
             return jsonify({"error": "no_changes", "message": "資料內容沒有變更。"}), 400
 
         backup_path = backup_current_data(username)
-        write_current_data(after)
         new_revision = dataset_revision(after)
+        new_counts = dataset_counts(after)
         audit_record = {
             "changed_at": datetime.now().isoformat(timespec='seconds'),
             "effective_date": effective_date,
@@ -1182,20 +1122,38 @@ def save_building_data_from_maintenance():
             "revision_after": new_revision,
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "summary": summary,
-            "counts": dataset_counts(after)
+            "counts": new_counts
         }
-        append_audit_record(data_changes_file_path, audit_record)
+        # 這裡把剛才讀到的 revision 一併傳下去：資料庫模式會用它做條件式 UPDATE，
+        # 把上面那段「讀出來再比對」之間的空窗也一起關掉（檔案模式行為不變）。
+        mirror_warning = store.save_current_data(
+            after,
+            new_revision=new_revision,
+            counts=new_counts,
+            username=username,
+            expected_revision=current_revision,
+            audit=audit_record,
+        )
         log_user_access(username, action='Maintain Building Data', extra=f"Reason: {reason} | Summary: {summary}")
 
-        return jsonify({
+        response = {
             "success": True,
             "message": "建物面積資料已更新。",
             "data": after,
             "revision": new_revision,
-            "counts": dataset_counts(after),
+            "counts": new_counts,
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "summary": summary
-        })
+        }
+        if mirror_warning:
+            response["warnings"] = [mirror_warning]
+        return jsonify(response)
+    except store.RevisionConflict as e:
+        return jsonify({
+            "error": "revision_conflict",
+            "message": str(e),
+            "current_revision": e.current_revision
+        }), 409
     except BuildingDataError as e:
         return jsonify({"error": "data_validation_failed", "message": str(e)}), 400
     except Exception as e:
@@ -1229,20 +1187,19 @@ def update_utility_trends():
             "chart_mode": "cumulative_line_plus_annual_bar"
         })
 
-        ensure_runtime_dirs()
         backup_path = backup_utility_trends(username)
-        temp_path = os.path.join(processed_dir, f"utility_trends_pending_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        shutil.move(temp_path, utility_trends_file_path)
+        mirror_warning = store.write_utility_trends(data, username)
 
         log_user_access(username, action='Update Utility Trends', extra=f"Backup: {backup_path or 'none'}")
-        return jsonify({
+        response = {
             "success": True,
             "message": "需求趨勢資料已更新。",
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "data": data
-        })
+        }
+        if mirror_warning:
+            response["warnings"] = [mirror_warning]
+        return jsonify(response)
     except ValueError as e:
         return jsonify({"error": "validation_failed", "message": str(e)}), 400
     except Exception as e:
@@ -1285,9 +1242,7 @@ def upload_data_file():
         with open(temp_json_path, 'r', encoding='utf-8') as f:
             converted_data = json.load(f)
         after = normalize_dataset(converted_data)
-        write_current_data(after)
-        if os.path.exists(temp_json_path):
-            os.remove(temp_json_path)
+        new_revision = dataset_revision(after)
 
         audit_record = {
             "changed_at": datetime.now().isoformat(timespec='seconds'),
@@ -1297,15 +1252,27 @@ def upload_data_file():
             "reason": f"上傳 Excel：{uploaded_file.filename}",
             "source_reference": uploaded_file.filename,
             "revision_before": dataset_revision(before),
-            "revision_after": dataset_revision(after),
+            "revision_after": new_revision,
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "summary": summarize_changes(before, after),
             "counts": dataset_counts(after)
         }
-        append_audit_record(data_changes_file_path, audit_record)
+        # 上傳是整批取代，本來就沒有樂觀鎖檢查，維持不帶 expected_revision
+        mirror_warning = store.save_current_data(
+            after,
+            new_revision=new_revision,
+            counts=dataset_counts(after),
+            username=username,
+            audit=audit_record,
+        )
+        if os.path.exists(temp_json_path):
+            os.remove(temp_json_path)
 
         log_user_access(username, action='Upload Data', extra=f"File: {uploaded_file.filename} | Backup: {backup_path or 'none'} | Rows: {result.get('rows')} | Buildings: {result.get('buildings')}")
 
+        warnings = list(result.get("warnings", []))
+        if mirror_warning:
+            warnings.append(mirror_warning)
         return jsonify({
             "success": True,
             "message": "資料更新成功，上一版資料已完成留存。" if backup_path else "資料更新成功，目前沒有舊版 data.json 可備份。",
@@ -1313,7 +1280,7 @@ def upload_data_file():
             "backup_file": os.path.basename(backup_path) if backup_path else None,
             "rows": result.get("rows"),
             "buildings": result.get("buildings"),
-            "warnings": result.get("warnings", [])
+            "warnings": warnings
         })
 
     except DataProcessError as e:
@@ -1331,7 +1298,7 @@ def upload_data_file():
 
 if __name__ == '__main__':
     # 本機開發沒有 IIS，也就沒有 Windows 驗證身分；給一個預設帳號才能進到畫面。
-    # 這段只有直接執行 app.py 時會生效，IIS (wfastcgi) 走的是 app.app，不會經過這裡。
+    # 這段只有直接執行 app.py 時會生效，IIS 走的是 wsgi:application，不會經過這裡。
     if not DEV_USER:
         DEV_USER = 'Local-Dev'
         print("本機模式：未設定 APP_DEV_USER，預設以 Local-Dev 身分登入。")

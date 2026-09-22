@@ -2,6 +2,12 @@
 
 建物管理平台是一個以 **Flask + Tailwind CSS + Vanilla JavaScript** 建置的建物資訊視覺化儀表板。系統會讀取建物樓層資料，整理成可互動的矩陣式看板，協助快速查看各廠棟、樓層、面積配置、無塵室面積、生產週邊、廠務設施、公設與樓高等資訊。
 
+資料可放在地端 JSON 檔案，也可改接 PostgreSQL（見「[PostgreSQL 資料庫](#postgresql-資料庫)」）。
+
+> 相關文件：
+> [`HANDOFF.md`](HANDOFF.md)（目前進度、部署順序與待辦）、
+> [`WORKLOG.md`](WORKLOG.md)（設計決策與開發過程）
+
 ---
 
 ## 專案特色
@@ -16,13 +22,14 @@
 - **側邊資訊面板**：點擊樓層或廠棟後，可顯示更詳細的資料摘要。
 - **單棟 3D 示意圖**：由現有樓層資料自動堆疊單棟模型，可旋轉、縮放、展開樓層並點選查看空間組成。
 - **Windows AD 身份辨識**：透過 IIS Windows Integrated Authentication 取得 `REMOTE_USER`。
-- **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`。
+- **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`（資料表已備妥，日後可改由資料庫管理）。
 - **Admin 網頁上傳更新資料**：admin 可直接在頁面上傳樓層面積 Excel，系統自動清洗並更新 `data.json`。
 - **Admin 表格式資料維護**：管理人員可在接近原始 Excel 欄位順序的介面新增、修改、移動或刪除建物與樓層資料。
 - **雙格式 Excel 匯出**：提供可重新上傳的人員閱讀版，以及固定工作表、固定英文欄位的標準資料版。
 - **異動稽核與衝突防護**：每次平台維護必須填寫生效日期、異動類型與原因，並保留來源、維護人員、面積淨異動與修改摘要；多人同時編輯時阻止舊版本覆蓋新資料。
-- **資料版本留存**：每次更新前會先把上一版 `data.json` 備份到 `data_backups/`。
-- **IIS / FastCGI 部署支援**：已包含 `web.config` 設定範例。
+- **資料版本留存**：每次更新前會先把上一版 `data.json` 備份到 `data_backups/`；接資料庫時每個 revision 另存一份完整快照。
+- **可切換的資料來源**：`DATA_BACKEND` 決定走地端 JSON 或 PostgreSQL，切換不需要改任何路由或前端。
+- **IIS 部署支援**：HttpPlatformHandler + Waitress，已包含 `web.config` 範例、一鍵部署腳本、正式切換腳本與離線打包腳本。
 - **存取紀錄**：後端會記錄使用者帳號、IP、操作、上傳與權限拒絕紀錄至 `access_log.txt`。
 
 ---
@@ -33,12 +40,14 @@
 
 - Python
 - Flask
+- Waitress（WSGI server）
 - Pandas
 - OpenPyXL
 - JSON API
-- IIS FastCGI / wfastcgi 部署設定
+- PostgreSQL 18 + psycopg 3（可選資料來源，見「PostgreSQL 資料庫」章節）
+- IIS HttpPlatformHandler 部署設定
 - Windows Integrated Authentication / `REMOTE_USER`
-- JSON-based Role-Based Access Control
+- Role-Based Access Control（目前讀 `permissions.json`）
 
 ### 前端
 
@@ -55,20 +64,45 @@
 ```text
 building/
 ├── app.py
+├── wsgi.py                    # Waitress / HttpPlatformHandler 進入點
+├── db.py                      # PostgreSQL 連線池與 .env 載入
 ├── data_processor.py          # Excel 清洗與 data.json 轉換邏輯
 ├── building_data_manager.py   # 資料驗證、版本、稽核與雙格式 Excel 匯出
 ├── web.config
 ├── README.md
+├── WORKLOG.md                 # 設計決策與開發過程
+├── HANDOFF.md                 # 目前進度、部署順序與待辦
 ├── requirements.txt
+├── .env.example               # 部署機環境設定範本（複製成 .env 後填寫）
+├── .env                       # 資料庫帳密等機密，不納入版控
 ├── permissions.json           # 角色權限設定檔
 ├── data.json                  # 執行時資料檔，需自行放置於專案根目錄
 ├── data_changes.json          # 平台資料維護異動紀錄，不納入版控
 ├── access_log.txt             # 執行後自動產生的使用者存取紀錄
-├── app.log                    # IIS / wfastcgi log，依 web.config 設定產生
+├── app.log                    # 應用程式 log
 ├── secret_key.txt             # 登入 session 簽章金鑰，首次啟動自動產生，不納入版控
+├── migrations/                # PostgreSQL schema migration
+│   ├── 001_init.sql           # building_mgmt schema：主表、稽核、權限、存取紀錄
+│   ├── 002_views.sql          # 對外 view 層（v_ 開頭，同一個 schema）
+│   └── 003_roles_grants.sql   # 角色與授權（需要 CREATEROLE，通常由 DBA 執行）
+├── store/                     # 資料存取層，app.py 只透過這裡讀寫
+│   ├── __init__.py            # 門面：依 DATA_BACKEND 分派，並處理雙寫
+│   ├── json_store.py          # 地端 JSON 檔案
+│   └── pg_store.py            # PostgreSQL（回傳結構與 JSON 檔完全相同）
 ├── scripts/
-│   ├── check-deployment.ps1   # 部署前環境自動檢查
+│   ├── deploy-iis.ps1         # IIS 部署（獨立網站或子應用程式，支援 -WhatIfOnly 預演）
+│   ├── switch-site.ps1        # 正式切換：把線上網址改指到新版，失敗自動回退
+│   ├── build-offline-bundle.ps1  # 在開發機產生 wheels\ 並驗證離線可裝
+│   ├── create-db-users.ps1    # 互動式建立兩個服務帳號（密碼不落檔案）
+│   ├── create_db_users.py     # 上面那支的實作
+│   ├── run-migrations.ps1     # 套用 schema、匯入資料與 hash 驗收
+│   ├── run_migrations.py      # migration 執行器
+│   ├── migrate_json_to_pg.py  # 地端 JSON → PostgreSQL 匯入與驗收
+│   ├── check-deployment.ps1   # 部署前後環境自動檢查
 │   └── setup-ad-login.ps1     # 設定 IIS 驗證（匿名 + Windows 並存）
+├── logs/                      # HttpPlatformHandler 的 stdout log，不納入版控
+├── wheels/                    # 離線部署用的 wheel 套件，不納入版控
+├── venv/                      # 部署機的虛擬環境，不納入版控也不可搬移
 ├── uploads/                   # admin 上傳的原始 Excel 留存，不納入版控
 ├── processed/                 # 清洗後 Excel 與暫存 JSON，不納入版控
 ├── data_backups/              # data.json 舊版備份，不納入版控
@@ -114,7 +148,7 @@ Flask 後端主程式，負責：
 - 依角色檢查使用者是否允許存取頁面 / API
 - 上傳 Excel 後先備份上一版 `data.json`，再更新目前資料
 - 記錄使用者存取資訊到 `access_log.txt`
-- 支援 IIS 透過 `WSGI_HANDLER=app.app` 呼叫
+- 由 `wsgi.py` 匯出成 `wsgi:application`，供 Waitress / HttpPlatformHandler 啟動
 
 主要路由：
 
@@ -312,7 +346,7 @@ Flask 讀取 permissions.json，比對 admin / user / viewer
 > 所有「未登入」的回應一律不使用 HTTP 401。IIS 會攔截 401 並再彈一次 Windows 帳密視窗，
 > 所以未登入的 API 回 `403 + {"error": "unauthenticated"}`，前端據此導向登入頁。
 
-### AD 設定（web.config 的 appSettings 或系統環境變數）
+### AD 設定（web.config 的 environmentVariables、`.env` 或系統環境變數）
 
 | 設定 | 說明 | 範例 |
 |---|---|---|
@@ -332,8 +366,10 @@ SIMPLE bind 不需要 MD4。bind 帳號格式依序嘗試 `NETBIOS\帳號` → `
 ### 帳號比對規則
 
 同一個人在不同來源寫法不同（SSO 是 `ASE\K11879`，手動登入是 `K11879`），
-系統比對 `permissions.json` 時會自動拆解 `網域\帳號`、`帳號@網域`、純帳號三種寫法，
+系統比對權限名單時會自動拆解 `網域\帳號`、`帳號@網域`、純帳號三種寫法，
 因此 `permissions.json` 填哪一種都可以對得起來。
+（權限改由資料庫管理後規則相同：`building_mgmt.user_roles` 同時存完整寫法與去網域的短寫法，
+兩邊都比對，結果與檔案版完全等價。）
 
 ### 本機開發
 
@@ -549,9 +585,423 @@ http://127.0.0.1:5020
 
 ---
 
+## PostgreSQL 資料庫
+
+平台的資料來源由環境變數 `DATA_BACKEND` 決定：
+
+| 值 | 資料來源 |
+|---|---|
+| `json`（預設） | 地端 JSON 檔案，行為與導入資料庫前完全相同 |
+| `postgres` | PostgreSQL 18；寫入同時鏡射回 JSON 檔 |
+
+所有檔案讀寫都集中在 `store/` 這一層：
+
+```text
+store/
+├── __init__.py     門面：依 DATA_BACKEND 分派讀取、處理雙寫
+├── json_store.py   地端 JSON 檔案
+└── pg_store.py     PostgreSQL
+```
+
+`app.py` 只呼叫 `store.*`，不再直接碰檔案，所以切換資料來源不需要改路由。
+
+### 雙寫與退路
+
+`postgres` 模式下，寫入會先進資料庫（資料、版本快照與稽核紀錄在**同一個交易**內
+完成），成功後再把同一份資料鏡射回 JSON 檔。
+
+這樣做是為了保留退路：切換期間若資料庫出狀況，把 `DATA_BACKEND` 改回 `json`
+重啟就能回到檔案版，而且檔案內容是最新的。確認穩定後把 `DATA_MIRROR_JSON`
+設成 `false` 即可停掉鏡射。
+
+鏡射失敗**不會**讓使用者的請求失敗 —— 此時資料庫已經是真實來源，檔案只是備援。
+失敗會記進 log，並在 API 回應的 `warnings` 帶一則訊息讓維運人員看得到。
+
+### 資料表設計重點
+
+- **關聯式為主，JSONB 只用在稽核快照。** 年度成長趨勢、製程分群、面積佔比這些
+  分析本質上都是 group by + sum，關聯式做這些是幾行 SQL。
+- **`data_backups/` 的「整包還原」語意由 `building_mgmt.dataset_snapshots` 保留**，
+  每個 revision 存一份完整 jsonb，可回溯任一版本。
+- **沒有做 SCD-2 時序表。** 年度資訊是 `floors` 的欄位，不是紀錄的生效期間，
+  做時序表只會讓每個查詢都要加 `WHERE valid_to IS NULL`。
+- **面積一律 `numeric` 不用浮點數**，避免大量 SUM 與百分比運算累積誤差。
+- **樂觀鎖沿用現有的 `dataset_revision`**，存檔時對 `building_mgmt.dataset_state`
+  下條件式 UPDATE，影響 0 列就回 409，行為與檔案版完全一致。
+- **欄位名稱沿用 `build_standard_workbook()` 既有的英文對照**，
+  Excel 匯出、資料表、對外 view 三者同一套語意。
+
+### schema 與角色
+
+所有物件都放在 **`building_mgmt`** 這一個 schema，表與 view 靠 `v_` 前綴區分：
+
+| 物件 | 用途 |
+|---|---|
+| `building_mgmt.<表名>` | 內部表，只有應用程式存取 |
+| `building_mgmt.v_<名稱>` | 對外 view，給 BI／報表 |
+
+| 帳號／角色 | 類型 | 權限 |
+|---|---|---|
+| `svc_building_mgmt_migrator` | 登入帳號 | schema 與物件的擁有者，只在跑 migration 時使用 |
+| `svc_building_mgmt_rw` | 登入帳號 | 應用程式日常使用，只有 DML，**不能改結構** |
+| `building_mgmt_reader` | 群組角色 | 外部 BI，**只授權 7 個 `v_` 開頭的 view**，內部表一個都看不到 |
+
+`building_mgmt_reader` 是 NOLOGIN 的群組角色，不是實際帳號。BI 的登入帳號由 DBA
+建立後 `GRANT` 進這個群組，多個帳號共用同一套授權，新增帳號不必再動 migration。
+
+schema 與帳號名稱都帶 `building_mgmt` 字樣，在共用的資料庫主機上一眼就能看出
+是建物管理平台的資料。帳號尤其重要 —— PostgreSQL 的角色是**整個 cluster 共用**的，
+撞名風險比 schema 還高。
+
+### 建立服務帳號
+
+密碼不進版控，所以 migration 只負責授權，帳號用互動式腳本建立
+（密碼不落檔案、不進指令歷史、不寫 log）：
+
+```powershell
+.\scripts\create-db-users.ps1 -AdminUser postgres
+```
+
+需要用有 CREATEROLE 權限的帳號執行。帳號已存在時只更新密碼，不動既有授權。
+只想看目前狀態就加 `-Status`。
+
+建好之後把兩組帳密填進 `.env`：
+
+```ini
+PGUSER=svc_building_mgmt_rw                    # 應用程式日常使用
+PGPASSWORD=...
+PGUSER_MIGRATOR=svc_building_mgmt_migrator     # 只有跑 migration 時才用
+PGPASSWORD_MIGRATOR=...
+```
+
+`run-migrations.ps1` 有設定 `PGUSER_MIGRATOR` 時會自動改用它連線，
+應用程式平常仍然用權限最小的 `svc_building_mgmt_rw`。
+
+> **要請 DBA 做的**：`svc_building_mgmt_migrator` 需要資料庫層級的 `CREATE` 權限
+> 才能第一次建立 schema：
+> `GRANT CREATE, CONNECT ON DATABASE <資料庫名> TO svc_building_mgmt_migrator;`
+> 之後的 migration 就不再需要這個權限。
+
+表與 view 同在一個 schema，所以隔離不是靠「不給 USAGE」，而是**逐一授權 view**。
+`003_roles_grants.sql` 最後有一段防呆：只要有任何非 `v_` 開頭的物件被授權給 reader，
+migration 會直接失敗並指出是哪一張表。
+
+> 新增 view 時記得同步補進 `003_roles_grants.sql` 的授權清單，
+> 否則外部帳號看不到新的 view。
+
+### 欄位字典
+
+欄位說明只定義在 `building_data_manager.DATA_DICTIONARY_ROWS` 一處，由
+`scripts/run_migrations.py` 同步到 `building_mgmt.data_dictionary`，再經
+`building_mgmt.v_data_dictionary` 提供給外部查詢（該 view 會一併給出對應的
+完整 view 名稱，外部不用自己拼）。
+
+- 標準資料版 Excel 的 `data_dictionary` 工作表在 `postgres` 模式下**讀資料庫那張表**，
+  所以 DBA 在資料庫端補的說明會直接反映到匯出檔，不必改程式。
+- `json` 模式（或資料庫讀不到時）退回程式裡的定義，匯出不會因此失敗。
+- 要新增或修改說明：改 `DATA_DICTIONARY_ROWS`，再重跑一次
+  `.\scripts\run-migrations.ps1`（schema 沒變動時也會同步字典）。
+- migration 只建表不塞資料，就是為了避免 SQL 裡再存一份而各自漂移。
+
+### 本機開發環境（免安裝版，不需要 Docker）
+
+與專案既有的 PortablePython 做法一致：用 binaries zip，不需要管理員權限，
+不註冊 Windows 服務，砍掉就是刪資料夾。
+
+```powershell
+# 1. 下載 postgresql-18.x-windows-x64-binaries.zip，解壓到 C:\dev\pgsql18
+
+# 2. 初始化（PG 18 已棄用 md5，一律用 scram-sha-256）
+C:\dev\pgsql18\bin\initdb.exe -D C:\dev\pgdata `
+    -U postgres -A scram-sha-256 -E UTF8 `
+    --locale-provider=builtin --locale=C.UTF-8 --pwprompt
+
+# 3. 起在 5433，避開之後可能安裝的其他 PostgreSQL
+C:\dev\pgsql18\bin\pg_ctl.exe start -D C:\dev\pgdata `
+    -l C:\dev\pgdata\server.log -o "-p 5433"
+
+# 4. 建資料庫
+C:\dev\pgsql18\bin\psql.exe -p 5433 -U postgres -c "CREATE DATABASE building ENCODING 'UTF8';"
+```
+
+`--locale-provider=builtin` 是刻意的：這個 provider 不依賴 OS 的 glibc / ICU 版本，
+可避免「換台機器後 collation 版本不同導致索引失效」這個經典問題 ——
+本機和公司 Server 的 ICU 版本幾乎不可能一樣。需要中文排序的地方再明確加
+`COLLATE "zh-Hant-x-icu"` 即可。
+
+> Python 端不需要另外安裝 PostgreSQL client：`psycopg[binary]` 的 wheel 內含 libpq。
+
+### 建立 schema 與匯入資料
+
+```powershell
+# 0. 準備連線設定
+Copy-Item .env.example .env     # 填入 PGHOST / PGDATABASE / PGUSER / PGPASSWORD
+
+# 1. 先看會做什麼
+.\scripts\run-migrations.ps1 -DryRun
+
+# 2. 建立 schema
+#    003_roles_grants.sql 需要 CREATEROLE 權限，若由 DBA 執行請加 -SkipRoles
+.\scripts\run-migrations.ps1
+
+# 3. 匯入地端 JSON 並驗收
+.\scripts\run-migrations.ps1 -MigrateData
+
+# 4. 之後隨時可重新驗證資料庫與 JSON 檔是否一致（不寫入）
+.\scripts\run-migrations.ps1 -VerifyOnly
+```
+
+### 驗收方式
+
+匯入的驗收條件是 **hash 相等**：
+
+```text
+dataset_revision(從 PostgreSQL 讀回來) == dataset_revision(從 data.json 讀)
+```
+
+`dataset_revision()` 是整包資料的 sha256（`building_data_manager.py` 既有的函式）。
+hash 相同就代表沒有任何欄位在搬運途中走樣，不需要另外寫一整套逐欄位比對。
+`pg_store.load_current_data()` 因此有一條硬約束：**回傳的巢狀中文 JSON 必須與
+`data.json` 完全相同**，前端 `data.js`、Excel 匯出與既有測試才能一行都不用改。
+
+### 切換到 PostgreSQL
+
+驗收全部 PASS 之後：
+
+```powershell
+# 1. 把 .env 的 DATA_BACKEND 改成 postgres（DATA_MIRROR_JSON 先維持 true）
+# 2. 重啟網站
+Restart-WebAppPool -Name "Pool-BuildingPlatform"
+# 3. 確認
+.\scripts\check-deployment.ps1 -SiteName BuildingPlatform
+```
+
+要退回檔案版的話，把 `DATA_BACKEND` 改回 `json` 再重啟即可 ——
+鏡射開著的期間 JSON 檔一直是最新的。
+
+### 一致性測試
+
+`tests/test_backend_parity.py` 會把同一串操作（讀取、資料維護、樂觀鎖衝突、
+製程分群、需求趨勢、Excel 匯出）分別跑在兩種 backend 上，逐一比對 API 回應，
+並確認鏡射回 JSON 的內容與純檔案模式完全相同。
+
+沒有設定資料庫連線時會自動 skip；要實際跑：
+
+```bash
+PGHOST=... PGPORT=... PGDATABASE=... PGUSER=... PGPASSWORD=... \
+    python -m pytest tests/test_backend_parity.py -v
+```
+
+### migration 規範
+
+`migrations/*.sql` 依檔名排序執行，套用紀錄與 sha256 存在
+`building_mgmt.schema_migrations`。**已經上過正式機的 migration 視為不可變**，
+要改請新增一個檔案；執行器偵測到已套用檔案的內容有變動時會提出警告但不重跑。
+
+---
+
 ## IIS 部署注意事項
 
-1. 確認 IIS 已啟用 CGI / FastCGI。
+本平台以 **HttpPlatformHandler + Waitress** 部署，與公司其他 Python 服務一致。
+IIS 直接管理 Python 程序的生命週期（自動啟動、崩潰重啟、停站時一併結束），
+取代已停止維護的 wfastcgi，也不需要 NSSM / WinSW 之類的服務管理器。
+
+### 一鍵部署
+
+在目標 Server 上以**系統管理員**身分執行：
+
+```powershell
+.\scripts\deploy-iis.ps1 -AppRoot "D:\WebServices\BuildingPlatform" -Port 8001
+```
+
+腳本會依序處理 IIS 功能安裝、HttpPlatformHandler 檢查、Python 尋找、venv 建立與
+套件安裝、執行期資料夾、`web.config` 路徑替換、AppPool 與網站建立、目錄權限、
+Windows 驗證設定，最後直接起一次 Waitress 做冒煙測試。可重複執行。
+
+常用參數：
+
+| 參數 | 用途 |
+|---|---|
+| `-Offline` | 從 `wheels\` 離線安裝套件（內網無法連 PyPI 時） |
+| `-RecreateVenv` | 先刪除既有 venv 再重建（部署目錄搬動過就必須用） |
+| `-SkipSite` | 只更新程式與套件，不動 IIS 站台（日常更新版本） |
+| `-SkipFeatures` | 略過 IIS 角色/功能安裝 |
+| `-SeedFrom` | 從既有部署複製一份資料檔過來（平行部署用，不修改來源） |
+| `-ReplaceExistingSite` | 允許接管已存在且指向其他目錄的 IIS 網站 |
+| `-FullIisReset` | 結束時執行 `iisreset`（預設只重啟本次的應用程式集區） |
+
+### 掛載方式：獨立網站 vs 子應用程式
+
+| 方式 | 網址 | 參數 |
+|---|---|---|
+| 獨立網站 | `http://主機:8001/` | `-SiteName` + `-Port` |
+| 子應用程式 | `http://主機/building_platform` | `-ParentSite` + `-AppPath` |
+
+掛成子應用程式時，腳本會自動把 `web.config` 的 `APP_URL_PREFIX` 填成該路徑。
+**這一項沒填的話每一頁都會是 404**：IIS 轉進來的 `PATH_INFO` 帶著前綴，
+Flask 拿 `/building_platform` 去比對只定義在 `/` 的路由當然對不上。
+填對之後前端會自動跟上（後端把它寫進 `window.APP_BASE`），不需要改 JS。
+
+### 平行部署（不動既有站台）
+
+新版要先跟舊版並存驗證時，用**另一個目錄**部署一套。
+
+獨立網站的話換網站名稱與連接埠：
+
+```powershell
+.\scripts\deploy-iis.ps1 `
+    -AppRoot  "D:\WebServices\BuildingPlatform-v2" `
+    -SiteName "BuildingPlatform-v2" `
+    -Port     8002 `
+    -SeedFrom "D:\WebServices\BuildingPlatform"
+```
+
+子應用程式的話換路徑（線上是 `/building_platform`，先在 `/building_platform_v2` 驗）：
+
+```powershell
+.\scripts\deploy-iis.ps1 `
+    -AppRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform_v2" `
+    -SeedFrom   "D:\WebServices\BuildingPlatform"
+```
+
+> 子應用程式建議用「同樣掛成子應用程式、但換路徑」的方式驗，而不是臨時改成獨立網站。
+> 這樣路徑前綴、驗證設定與前端 `APP_BASE` 都會走到跟正式環境相同的程式碼路徑，
+> 切換當天才不會第一次執行到沒驗過的東西。
+
+腳本針對平行部署有三道保護：
+
+- **網站名稱撞到既有站台**（且指向不同目錄）→ 直接中止，不會把既有站台接管過來。
+  確實要接管才加 `-ReplaceExistingSite`。
+- **連接埠已被其他站台佔用** → 直接中止並提示換一個。
+- **應用程式集區正被其他站台使用** → 直接中止；兩個站台共用集區會共享 Python 程序。
+
+另外預設**不執行 `iisreset`**（那會重啟整台機器的所有站台），
+只重啟本次部署的應用程式集區。第一次安裝 HttpPlatformHandler 時才需要
+另外跑一次 `iisreset`。
+
+平行部署後要知道的幾件事：
+
+| 項目 | 說明 |
+|---|---|
+| 資料 | `-SeedFrom` 是**複製**不是共用。部署後兩邊各走各的，舊站台的新異動不會同步過來 |
+| 登入 | 兩個站台各有自己的 `secret_key.txt`，session 互相獨立 |
+| 舊站台 | 完全不受影響，仍走原本的 wfastcgi `web.config` |
+| 驗收完成後 | 用 `scripts\switch-site.ps1` 正式切換，確認無誤再移除舊站台 |
+
+### 正式切換（子應用程式）
+
+驗證完成後，把線上網址改指到新版：
+
+```powershell
+.\scripts\switch-site.ps1 `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform" `
+    -NewRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -NewAppPool "Pool-BuildingPlatform-v2"
+```
+
+腳本會照這個順序做，**任何一步失敗都自動回退**：
+
+1. 記錄目前狀態到 `logs\cutover-state.json`
+2. 停止舊版的應用程式集區 —— 切換窗口從這裡開始
+3. 把舊目錄的資料檔複製到新目錄
+4. 新版若已接 PostgreSQL，重跑匯入並驗收 hash
+5. 複製 `secret_key.txt`，已登入的使用者不會被登出
+6. 設定 `APP_URL_PREFIX` 為正式路徑
+7. 應用程式改指到新目錄
+8. 重設 Windows 驗證（驗證設定是綁在路徑上的）
+9. 冒煙測試 `/api/auth/status`（不需登入、永遠回 200）
+
+第 3 步是最容易被忽略的：平行驗證期間舊版的資料已經往前走，
+不重新同步就切過去會吃掉這段異動。所以**一定要先停舊版再同步**，順序不能反。
+
+先看會做什麼：
+
+```powershell
+.\scripts\switch-site.ps1 ... -WhatIfOnly
+```
+
+回退：
+
+```powershell
+.\scripts\switch-site.ps1 `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform" `
+    -NewRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -Rollback
+```
+
+> 回退期間若有人已經在新版改過資料，那些異動不會自動回到舊目錄。
+> 切換窗口盡量挑沒人使用的時段，就是為了縮小這個風險。
+> 舊目錄不會被腳本刪除或修改，跑順一兩週再清。
+
+### 前置需求
+
+1. **HttpPlatformHandler v2.0**：IIS 不內建，必須另外安裝 MSI
+   （<https://www.iis.net/downloads/microsoft/httpplatformhandler>）。
+   未安裝時所有請求都會回 HTTP 500。
+2. **IIS 功能**：Web Server、Windows 驗證、**CGI**
+   （`Web-CGI` 是 HttpPlatformHandler 的前置需求，不能省略）。
+3. **Python 3.11 以上，且必須勾選「Install for all users」**
+   （會裝到 `C:\Program Files\PythonXX`）。裝在 `C:\Users\...\AppData\` 底下的 Python，
+   IIS 應用程式集區帳號無法存取，程序永遠起不來（IIS 回 502）。
+
+### 離線部署
+
+venv 在建立時會寫死 Python 的絕對路徑，**複製或搬移 venv 到別的路徑或機器一定會壞**
+（`Fatal error in launcher: Unable to create process ...`）。因此搬移的是原始碼與
+`wheels/`，venv 一律在部署機的最終路徑重建。
+
+#### 1. 開發機打包（可連網的機器）
+
+```powershell
+# 先在部署機確認 Python 版本
+python --version
+
+# 回到開發機，用相同版本打包
+.\scripts\build-offline-bundle.ps1 -PythonVersion 3.11 -Zip
+```
+
+腳本會下載 `win_amd64` 的預編譯 wheel，然後**實際驗證一次**：建立暫時 venv、
+用 `--no-index` 從 `wheels\` 裝起來、跑 `pip check`、再 import 一次所有套件。
+
+這一步很重要 —— 打包完卻在內網部署機才發現少一個相依套件，是離線部署最常見的坑。
+（本機 Python 版本與 `-PythonVersion` 不同時會自動略過驗證並提醒。）
+
+`-Zip` 會另外產生一個可搬運的壓縮檔，已排除 `venv\`、`.env` 與各執行期資料夾。
+
+**Python 版本必須一致**：wheel 分版本（cp311、cp312…），
+`psycopg`、`pandas`、`numpy` 含 C extension，版本不符就裝不起來。
+
+#### 2. 還要手動帶進內網的東西
+
+腳本抓不到這兩個，要自己下載：
+
+| 項目 | 來源 |
+|---|---|
+| Python 的 Windows 安裝程式 | <https://www.python.org/downloads/windows/>（務必勾 Install for all users） |
+| HttpPlatformHandler v2.0 MSI | <https://www.iis.net/downloads/microsoft/httpplatformhandler> |
+
+#### 3. 部署機安裝
+
+```powershell
+.\scripts\deploy-iis.ps1 -Offline `
+    -AppRoot    "D:\WebServices\BuildingPlatform-v2" `
+    -ParentSite "Default Web Site" `
+    -AppPath    "building_platform_v2"
+```
+
+日後只更新套件（venv 不用重建）：
+
+```powershell
+.\venv\Scripts\pip install --no-index --find-links=wheels -r requirements.txt
+```
+
+### 逐項檢查清單
+
+1. 確認 IIS 已啟用 CGI 與 Windows 驗證，且已安裝 HttpPlatformHandler。
 2. 確認 IIS 驗證設定（**與登入畫面直接相關，請務必照做**）：
 
    | 路徑 | 匿名驗證 | Windows 驗證 |
@@ -574,13 +1024,16 @@ http://127.0.0.1:5020
    ```
 
    設定完成後執行 `iisreset /restart`。
-3. 確認已安裝 `ldap3`（AD 帳密登入用），並在 `web.config` 的 `appSettings` 填好 `AD_SERVER`。
-   離線機器可先在有網路的機器 `pip download ldap3 -d wheels`，再到目標機器
-   `pip install --no-index --find-links wheels ldap3`。
-4. 確認 Python 與 `wfastcgi.py` 路徑與 `web.config` 一致。
-5. 確認 `PYTHONPATH` 指向專案根目錄。
+3. 確認已安裝 `ldap3`（AD 帳密登入用），並在 `web.config` 的 `environmentVariables`
+   填好 `AD_SERVER`。
+4. 確認 `web.config` 的 `processPath` 指向部署目錄底下 `venv\Scripts\waitress-serve.exe`，
+   且 `forwardWindowsAuthToken="true"`。**少了這個屬性，IIS 的驗證結果不會傳給 Python，
+   單一登入會完全失效。**
+5. 確認 `PYTHONPATH` 指向專案根目錄（Waitress 靠它找到 `wsgi:application`），
+   且 `PYTHONUNBUFFERED=1`（沒設的話 `logs\python.log` 會一直是空的，排錯時沒有線索）。
 6. 確認 IIS App Pool 身分有權限讀取專案目錄。
 7. 確認 IIS App Pool 身分有權限寫入：
+   - `logs/`（HttpPlatformHandler 的 stdout log）
    - `data.json`
    - `access_log.txt`
    - `app.log`
@@ -591,15 +1044,36 @@ http://127.0.0.1:5020
    - `data_backups/`
 8. 確認 `permissions.json` 已設定正式 AD 帳號。
 9. Windows 整合驗證的身分來源依序為 `REMOTE_USER` / `LOGON_USER` / `AUTH_USER`；
-   若 IIS 改用 `forwardWindowsAuthToken` 傳 token，`/auth/sso` 也會解析
-   `X-IIS-WindowsAuthToken`（讀 token 的 SID 反查帳號）。
+   `/auth/sso` 另外會解析 `forwardWindowsAuthToken` 傳來的 `X-IIS-WindowsAuthToken`
+   （讀 token 的 SID 反查帳號）。
 10. 網域內電腦若仍會跳出 Windows 帳密視窗，請把平台網址加入瀏覽器的
     「近端內部網路」信任區（可用 GPO 統一派送）；沒加入時仍可用登入畫面輸入 AD 帳密。
 11. 若 admin 要上傳大檔案，需確認 IIS request limit 與 Flask `MAX_CONTENT_LENGTH` 設定，目前 Flask 限制為 50MB。
+12. **資料庫密碼不要寫進 `web.config`**。這個檔案有進版控，寫進去就等於 commit 進 git。
+    連線資訊放部署機的 `.env`（見 `.env.example`），該檔案已列入 `.gitignore`。
 
-### 部署前自動檢查
+### 常見錯誤
 
-`scripts/check-deployment.ps1` 會讀取 `web.config` 內實際設定的路徑，檢查 Python / wfastcgi、IIS 功能與 FastCGI 登錄、專案檔案、`permissions.json`、執行期資料夾寫入權限、AD 網域加入狀態，以及前端 CDN 連線是否正常。在目標 Server 上、專案根目錄執行：
+| 狀況 | 原因與處理 |
+|---|---|
+| HTTP 500（所有頁面） | HttpPlatformHandler 未安裝，裝 MSI 後 `iisreset` |
+| HTTP 502 | Python 程序起不來。看 `logs\python.log`；常見是 import 錯誤或套件缺失 |
+| `logs\python.log` 是空的 | `PYTHONUNBUFFERED=1` 沒設，或 `logs\` 不存在／AppPool 沒寫入權限 |
+| `Fatal error in launcher` | venv 被搬移過。用 `deploy-iis.ps1 -RecreateVenv` 在最終路徑重建 |
+| `No Python at '...AppData'` | Python 裝在使用者目錄。重裝並勾「Install for all users」 |
+| `unsupported hash type MD4` | ldap3 要用 SIMPLE bind，不要用 NTLM（本專案已是 SIMPLE） |
+| SSO 抓到 `Administrator` | 不能用 `ImpersonateLoggedOnUser`，要讀 token 的 SID（本專案已是這個做法） |
+| HTTP 503 | AppPool 已停止，到 IIS 管理員重新啟動 |
+| `SERVER_NAME: waitress.invalid` | 直接打到 Waitress 的動態 port 繞過了 IIS，請走 IIS 站台的 port |
+
+### 部署前後自動檢查
+
+`scripts/check-deployment.ps1` 會讀取 `web.config` 的 `httpPlatform` 設定，檢查
+venv 與 Waitress、`forwardWindowsAuthToken`、HttpPlatformHandler 模組、IIS 功能、
+專案檔案、`permissions.json`、執行期資料夾寫入權限、`.env` 是否存在且權限已收斂、
+`DATA_BACKEND` 設定、AD 網域加入狀態，以及前端 CDN 連線是否正常。
+`DATA_BACKEND=postgres` 時還會實際連一次資料庫並確認 migration 已套用。
+在目標 Server 上、專案根目錄執行：
 
 ```powershell
 .\scripts\check-deployment.ps1
@@ -641,19 +1115,25 @@ access_log.txt
 - 前端目前採用 ES Modules，因此需透過 HTTP server 執行，不建議直接用檔案方式開啟 HTML。
 - Tailwind CSS 與 Lucide Icons 使用 CDN，部署環境需能連線至 CDN，否則需改為本地化資源。
 - `components.js` 內含大量 UI HTML template，若後續功能持續擴充，建議逐步拆分為更細的元件模組。
-- `data.json` 目前以檔案方式管理，若資料量變大或需要多人同時更新，可考慮改為資料庫。
+- `data.json` 以檔案方式管理仍是預設行為；需要多人同時更新或對外供資料時，把 `DATA_BACKEND`
+  改成 `postgres` 即可（見「PostgreSQL 資料庫」）。
+- 所有檔案讀寫都集中在 `store/`，`app.py` 不再直接碰檔案。要新增資料來源時加一個 store 模組即可。
 - 若要接正式 AD 群組，可保留 `require_roles()`，只替換 `get_user_role()` 的角色查詢來源。
 
 ---
 
 ## 後續可改善項目
 
-- 新增 `data.sample.json`
-- 增加資料備份還原功能
+資料庫這條線的階段規劃（Phase 3 之後）與正式機部署順序整理在
+[`HANDOFF.md`](HANDOFF.md)，設計決策的來龍去脈在 [`WORKLOG.md`](WORKLOG.md)。
+
+- 停用 JSON 鏡射（`DATA_MIRROR_JSON=false`），資料庫成為唯一來源
+- 將 `permissions.json` 改接資料庫（`building_mgmt.user_roles` 已建好，`app.py` 尚未接）
+- 將 `access_log.txt` 改寫資料庫（`building_mgmt.access_log` 已建好，按月分割）
+- 增加資料備份還原功能（`building_mgmt.dataset_snapshots` 已保留每個 revision 的完整快照）
 - 增加上傳紀錄查詢頁
-- 將 CDN 資源改成本地靜態檔
+- 將 CDN 資源改成本地靜態檔（Tailwind CDN 是 JIT 編譯器，本地化需要加建置步驟）
 - 將 `components.js` 拆分為 Header、Matrix、Panel 等模組
-- 將 `permissions.json` 改接 AD Group 或資料庫
 - 依角色隱藏 / 顯示更多前端功能按鈕
 - 補上 API 錯誤畫面與資料格式驗證
 - 增加部署文件，例如 IIS 設定截圖或 SOP

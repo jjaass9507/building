@@ -4,22 +4,27 @@
 
 .DESCRIPTION
     在目標 Server 上，於專案根目錄執行本腳本 (或指定 -AppRoot)。
-    腳本會讀取專案根目錄的 web.config，解析出實際設定的 Python / wfastcgi /
-    PYTHONPATH / WSGI_LOG 路徑，並依序檢查：
+    腳本會讀取專案根目錄的 web.config，解析出 httpPlatform 區段設定的
+    waitress-serve.exe / PYTHONPATH / stdout log 路徑，並依序檢查：
 
-      1. web.config 是否存在、路徑是否已從範例值改成本機實際路徑
-      2. web.config 內指到的 python.exe / wfastcgi.py 是否存在
-      3. Python 版本是否 >= 3.11
-      4. requirements.txt 內的套件是否都已安裝
-      5. IIS 角色/功能：Web Server、CGI、Windows Authentication
-      6. IIS FastCGI 應用程式登錄是否與 web.config 的 scriptProcessor 一致
-      7. 專案必要檔案 / 資料夾是否存在 (app.py、templates、static ...)
-      8. permissions.json 是否存在、格式正確、admins 非空
-      9. 執行期資料夾 (uploads/processed/data_backups/utility_trend_backups)
-         與根目錄 (app.log/access_log.txt/data.json) 是否可寫入
-     10. 本機是否已加入 AD 網域 (Windows Integrated Authentication 需要)
-     11. 對外連線到前端 CDN (tailwindcss / unpkg / jsdelivr) 是否正常
-     12. (可選) 指定 -SiteName 時，檢查 IIS 網站是否存在、實體路徑是否吻合、
+      1. web.config 是否存在、是否已改用 HttpPlatformHandler、
+         路徑是否已從範例值改成本機實際路徑
+      2. forwardWindowsAuthToken 是否啟用 (沒有它單一登入會完全失效)、
+         arguments 是否使用 %HTTP_PLATFORM_PORT% 並指向 wsgi:application、
+         PYTHONUNBUFFERED 是否設定 (沒設的話 log 會是空的)
+      3. venv 的 python.exe / waitress-serve.exe / wsgi.py 是否存在
+      4. Python 版本是否 >= 3.11
+      5. requirements.txt 內的套件是否都已安裝
+      6. IIS 角色/功能：Web Server、CGI、Windows Authentication
+      7. HttpPlatformHandler 模組是否已安裝、stdout log 目錄是否存在
+      8. 專案必要檔案 / 資料夾是否存在 (app.py、wsgi.py、templates、static ...)
+      9. permissions.json 是否存在、格式正確、admins 非空
+     10. 執行期資料夾與根目錄是否可寫入；.env 是否存在且權限已收斂；
+         DATA_BACKEND 設定為何；資料庫機密有沒有誤寫進進版控的 web.config；
+         DATA_BACKEND=postgres 時實際連線測試並確認 migration 已套用
+     11. 本機是否已加入 AD 網域 (Windows Integrated Authentication 需要)
+     12. 對外連線到前端 CDN (tailwindcss / unpkg / jsdelivr) 是否正常
+     13. (可選) 指定 -SiteName 時，檢查 IIS 網站是否存在、實體路徑是否吻合、
          該路徑下 Windows Authentication 是否已啟用
 
     每一項會標記 [PASS] / [WARN] / [FAIL]，結束時印出總結。
@@ -166,59 +171,82 @@ if (-not (Test-Path $webConfigPath)) {
     Add-Result -Status PASS -Check "web.config 存在"
 }
 
-# 2. 解析 web.config 內容
+# 2. 解析 web.config 內容（HttpPlatformHandler + Waitress）
 $pythonExe = $null
-$wfastcgiPy = $null
+$waitressExe = $null
 $pythonPathValue = $null
-$wsgiLogPath = $null
+$stdoutLogPath = $null
+$envVars = @()
 
 if (Test-Path $webConfigPath) {
     try {
         [xml]$webConfigXml = Get-Content $webConfigPath -Raw
 
-        $scriptProcessor = $webConfigXml.configuration.'system.webServer'.handlers.add.scriptProcessor
-
-        # scriptProcessor 格式為 {python.exe}|{wfastcgi.py 參數}，
-        # 其中參數部分可能（也建議）被引號包住，解析時要一併去掉引號。
-        $wfastcgiQuoted = $false
-        if ($scriptProcessor -match '^(.*?python\.exe)\|(.*)$') {
-            $pythonExe = $Matches[1].Trim()
-            $rawArgs   = $Matches[2].Trim()
-            if ($rawArgs -match '^"(.*)"$') {
-                $wfastcgiQuoted = $true
-                $wfastcgiPy = $Matches[1]
-            } else {
-                $wfastcgiPy = $rawArgs
-            }
-        }
-
-        $appSettings = $webConfigXml.configuration.appSettings.add
-        $pythonPathValue = ($appSettings | Where-Object { $_.key -eq 'PYTHONPATH' }).value
-        $wsgiLogPath     = ($appSettings | Where-Object { $_.key -eq 'WSGI_LOG' }).value
-
-        if ($scriptProcessor -match 'C:\\inetpub\\wwwroot\\BuildingPlatform' -or $scriptProcessor -match 'D:\\FAC_Web\\BuildingPlatform') {
-            Add-Result -Status WARN -Check "web.config 路徑已改成本機實際路徑" `
-                -Detail "目前仍是範例/舊路徑：$scriptProcessor，請確認是否已改成這台 Server 的實際安裝路徑"
+        $httpPlatform = $webConfigXml.configuration.'system.webServer'.httpPlatform
+        if (-not $httpPlatform) {
+            Add-Result -Status FAIL -Check "web.config 使用 HttpPlatformHandler" `
+                -Detail ("web.config 內找不到 <httpPlatform> 區段。`n" +
+                         "       本專案已從 wfastcgi 改為 HttpPlatformHandler + Waitress，`n" +
+                         "       請用最新版的 web.config，或執行 scripts\deploy-iis.ps1 重新部署。")
         } else {
-            Add-Result -Status PASS -Check "web.config 路徑已改成本機實際路徑" -Detail $scriptProcessor
-        }
+            Add-Result -Status PASS -Check "web.config 使用 HttpPlatformHandler"
 
-        # 路徑含空白時，wfastcgi.py 參數一定要用引號包住。
-        # 否則 IIS 把未加引號的參數接到命令列，Windows 依空白拆解，Python 只收到第一段，
-        # 造成 can't open file 'D:\Web' -> IIS 回報 0x00000002「FastCGI 處理序意外地結束」，
-        # 而且因為 Python 在載入 wfastcgi.py 前就結束，app.log 完全不會有任何內容。
-        if ($wfastcgiPy -and $wfastcgiPy.Contains(' ')) {
-            if ($wfastcgiQuoted) {
-                Add-Result -Status PASS -Check "路徑含空白時 wfastcgi.py 參數已加引號"
+            $waitressExe   = $httpPlatform.processPath
+            $platformArgs  = $httpPlatform.arguments
+            $stdoutLogPath = $httpPlatform.stdoutLogFile
+
+            # processPath 指向 venv\Scripts\waitress-serve.exe，
+            # 同一個 Scripts 目錄下的 python.exe 就是這個 venv 的直譯器。
+            if ($waitressExe -match '^(?<venv>.*)\\Scripts\\waitress-serve\.exe$') {
+                $pythonExe = Join-Path $Matches['venv'] 'Scripts\python.exe'
+            }
+
+            $envVars = @($httpPlatform.environmentVariables.environmentVariable)
+            $pythonPathValue = ($envVars | Where-Object { $_.name -eq 'PYTHONPATH' }).value
+
+            if ($waitressExe -match 'C:\\inetpub\\wwwroot\\BuildingPlatform' -or $waitressExe -match 'D:\\FAC_Web\\BuildingPlatform') {
+                Add-Result -Status WARN -Check "web.config 路徑已改成本機實際路徑" `
+                    -Detail "目前仍是範例/舊路徑：$waitressExe，請執行 scripts\deploy-iis.ps1 或手動改成這台 Server 的實際安裝路徑"
             } else {
-                Add-Result -Status FAIL -Check "路徑含空白時 wfastcgi.py 參數已加引號" `
-                    -Detail ("路徑含空白但未加引號，IIS 啟動時會被拆成兩段參數而失敗 (0x00000002)。`n" +
-                             "       請把 web.config 的 scriptProcessor 改成 (引號在 XML 內寫作 &quot;)：`n" +
-                             "       $pythonExe|`"$wfastcgiPy`"`n" +
-                             "       並同步更新 IIS FastCGI 登錄的 arguments 欄位，兩邊要完全一致。")
+                Add-Result -Status PASS -Check "web.config 路徑已改成本機實際路徑" -Detail $waitressExe
+            }
+
+            # 沒有 forwardWindowsAuthToken，IIS 的 Windows 驗證結果不會傳給 Python，
+            # app.py 的 username_from_windows_token() 永遠收不到 X-IIS-WindowsAuthToken，
+            # 單一登入會整個失效（畫面上看起來就是一直停在登入頁）。
+            if ($httpPlatform.forwardWindowsAuthToken -eq 'true') {
+                Add-Result -Status PASS -Check "forwardWindowsAuthToken 已啟用"
+            } else {
+                Add-Result -Status FAIL -Check "forwardWindowsAuthToken 已啟用" `
+                    -Detail "httpPlatform 未設定 forwardWindowsAuthToken=`"true`"，Windows 單一登入會完全失效"
+            }
+
+            # arguments 必須用 %HTTP_PLATFORM_PORT%（IIS 動態指派的 port）
+            # 並指向 wsgi:application。寫死 port 會導致 IIS 代理不到。
+            if ($platformArgs -match '%HTTP_PLATFORM_PORT%') {
+                Add-Result -Status PASS -Check "arguments 使用 %HTTP_PLATFORM_PORT%"
+            } else {
+                Add-Result -Status FAIL -Check "arguments 使用 %HTTP_PLATFORM_PORT%" `
+                    -Detail "目前 arguments 為 '$platformArgs'，未使用 IIS 動態指派的 port，IIS 會代理不到 Waitress"
+            }
+            if ($platformArgs -match 'wsgi:application') {
+                Add-Result -Status PASS -Check "arguments 指向 wsgi:application"
+            } else {
+                Add-Result -Status FAIL -Check "arguments 指向 wsgi:application" -Detail "目前 arguments 為 '$platformArgs'"
+            }
+
+            # 沒設 PYTHONUNBUFFERED，stdout 會被緩衝，logs\python.log 會一直是空的，
+            # 出問題時完全沒有線索可看。
+            $unbuffered = ($envVars | Where-Object { $_.name -eq 'PYTHONUNBUFFERED' }).value
+            if ($unbuffered -eq '1') {
+                Add-Result -Status PASS -Check "PYTHONUNBUFFERED 已設為 1"
+            } else {
+                Add-Result -Status WARN -Check "PYTHONUNBUFFERED 已設為 1" `
+                    -Detail "未設定時 Python 的 stdout 會被緩衝，logs\python.log 會是空的，排錯時沒有任何線索"
             }
         }
-        # PYTHONPATH 必須包含專案根目錄 (才 import 得到 app.py)，
+
+        # PYTHONPATH 必須包含專案根目錄 (才 import 得到 wsgi.py / app.py)，
         # 若這份 Python 把標準函式庫放在獨立的 stdlib 資料夾 (常見於 portable 版)，
         # 也必須一併列入，否則連 shutil 這種標準模組都會 ModuleNotFoundError。
         if ($pythonPathValue) {
@@ -228,7 +256,7 @@ if (Test-Path $webConfigPath) {
                 Add-Result -Status PASS -Check "PYTHONPATH 包含專案根目錄"
             } else {
                 Add-Result -Status FAIL -Check "PYTHONPATH 包含專案根目錄" `
-                    -Detail "PYTHONPATH 為 '$pythonPathValue'，未包含 $AppRoot，wfastcgi 會 import 不到 app.py"
+                    -Detail "PYTHONPATH 為 '$pythonPathValue'，未包含 $AppRoot，Waitress 會 import 不到 wsgi:application"
             }
 
             if ($pythonExe) {
@@ -245,15 +273,23 @@ if (Test-Path $webConfigPath) {
                 }
             }
         } else {
-            Add-Result -Status WARN -Check "web.config 有設定 PYTHONPATH" -Detail "appSettings 內找不到 PYTHONPATH"
+            Add-Result -Status WARN -Check "web.config 有設定 PYTHONPATH" -Detail "environmentVariables 內找不到 PYTHONPATH"
         }
 
-        # AD 帳密登入 (使用者按掉 Windows 驗證視窗時的備援登入方式) 需要 AD_SERVER
-        $adServerValue = ($appSettings | Where-Object { $_.key -eq 'AD_SERVER' }).value
+        # AD 帳密登入 (使用者按掉 Windows 驗證視窗時的備援登入方式) 需要 AD_SERVER。
+        # 可以放在 web.config 的 environmentVariables，也可以放在部署機的 .env。
+        $adServerValue = ($envVars | Where-Object { $_.name -eq 'AD_SERVER' }).value
+        if (-not $adServerValue) {
+            $envFile = Join-Path $AppRoot '.env'
+            if (Test-Path $envFile) {
+                $adLine = Get-Content $envFile | Where-Object { $_ -match '^\s*AD_SERVER\s*=\s*\S' }
+                if ($adLine) { $adServerValue = '(由 .env 提供)' }
+            }
+        }
         if ($adServerValue) {
-            Add-Result -Status PASS -Check "web.config 有設定 AD_SERVER" -Detail $adServerValue
+            Add-Result -Status PASS -Check "有設定 AD_SERVER" -Detail $adServerValue
         } else {
-            Add-Result -Status WARN -Check "web.config 有設定 AD_SERVER" `
+            Add-Result -Status WARN -Check "有設定 AD_SERVER" `
                 -Detail "未設定 AD_SERVER，Windows 單一登入仍可用，但登入畫面的『AD 帳號密碼登入』會無法使用"
         }
     } catch {
@@ -261,23 +297,35 @@ if (Test-Path $webConfigPath) {
     }
 }
 
-# 3. python.exe / wfastcgi.py 是否存在
-if ($pythonExe) {
-    if (Test-Path $pythonExe) {
-        Add-Result -Status PASS -Check "python.exe 存在" -Detail $pythonExe
+# 3. venv 的 python.exe / waitress-serve.exe 是否存在
+if ($waitressExe) {
+    if (Test-Path $waitressExe) {
+        Add-Result -Status PASS -Check "waitress-serve.exe 存在" -Detail $waitressExe
     } else {
-        Add-Result -Status FAIL -Check "python.exe 存在" -Detail "找不到 $pythonExe"
+        Add-Result -Status FAIL -Check "waitress-serve.exe 存在" `
+            -Detail ("找不到 $waitressExe`n" +
+                     "       venv 內寫死絕對路徑，部署目錄搬動過就必須重建：`n" +
+                     "       .\scripts\deploy-iis.ps1 -RecreateVenv")
     }
 } else {
-    Add-Result -Status FAIL -Check "python.exe 存在" -Detail "無法從 web.config 解析出 scriptProcessor"
+    Add-Result -Status FAIL -Check "waitress-serve.exe 存在" -Detail "無法從 web.config 解析出 processPath"
 }
 
-if ($wfastcgiPy) {
-    if (Test-Path $wfastcgiPy) {
-        Add-Result -Status PASS -Check "wfastcgi.py 存在" -Detail $wfastcgiPy
+if ($pythonExe) {
+    if (Test-Path $pythonExe) {
+        Add-Result -Status PASS -Check "venv 的 python.exe 存在" -Detail $pythonExe
     } else {
-        Add-Result -Status FAIL -Check "wfastcgi.py 存在" -Detail "找不到 $wfastcgiPy"
+        Add-Result -Status FAIL -Check "venv 的 python.exe 存在" -Detail "找不到 $pythonExe"
     }
+}
+
+# wsgi.py 是 Waitress 的進入點，少了它 IIS 只會回 502
+$wsgiPath = Join-Path $AppRoot 'wsgi.py'
+if (Test-Path $wsgiPath) {
+    Add-Result -Status PASS -Check "wsgi.py 存在"
+} else {
+    Add-Result -Status FAIL -Check "wsgi.py 存在" `
+        -Detail "找不到 $wsgiPath，HttpPlatformHandler 啟動的 waitress-serve 會找不到 wsgi:application"
 }
 
 # 4. Python 是否能正常啟動 / 版本
@@ -328,8 +376,9 @@ if ($pythonExe -and (Test-Path $pythonExe)) {
     } else {
         $requirementsPath = Join-Path $AppRoot 'requirements.txt'
         if (Test-Path $requirementsPath) {
+            # 版本條件與 extras 都要去掉：psycopg[binary]>=3.2.0 的套件名是 psycopg
             $packages = Get-Content $requirementsPath | Where-Object { $_.Trim() -and -not $_.StartsWith('#') } |
-                ForEach-Object { ($_ -split '[><=!~]')[0].Trim() }
+                ForEach-Object { ($_ -split '[><=!~\[]')[0].Trim() }
 
             foreach ($pkg in $packages) {
                 $showResult = Invoke-Native -FilePath $pythonExe -ArgumentList @('-m', 'pip', 'show', $pkg)
@@ -367,38 +416,34 @@ try {
     Add-Result -Status WARN -Check "IIS 角色/功能檢查" -Detail "此系統無 Get-WindowsFeature (可能非 Windows Server)，請自行確認已啟用 CGI/FastCGI 與 Windows Authentication"
 }
 
-# 7. IIS FastCGI 應用程式登錄是否與 web.config 一致
-if ($pythonExe -and $wfastcgiPy) {
-    $appcmd = Join-Path $env:WINDIR 'System32\inetsrv\appcmd.exe'
-    if (Test-Path $appcmd) {
-        $fastCgiResult = Invoke-Native -FilePath $appcmd -ArgumentList @('list', 'config', '-section:system.webServer/fastCgi')
+# 7. HttpPlatformHandler 模組是否已安裝
+# IIS 不內建這個模組，要另外裝 MSI；沒裝的話所有請求都會回 500。
+$moduleFound = $false
+if (Get-Command Get-WebGlobalModule -ErrorAction SilentlyContinue) {
+    $moduleFound = [bool](Get-WebGlobalModule -ErrorAction SilentlyContinue |
+                          Where-Object { $_.Name -like 'httpPlatformHandler*' })
+}
+if (-not $moduleFound) {
+    # 沒有 WebAdministration 模組時退而檢查 DLL
+    $moduleFound = Test-Path "$env:SystemRoot\System32\inetsrv\httpplatformhandler.dll"
+}
+if ($moduleFound) {
+    Add-Result -Status PASS -Check "HttpPlatformHandler 模組已安裝"
+} else {
+    Add-Result -Status FAIL -Check "HttpPlatformHandler 模組已安裝" `
+        -Detail ("IIS 不內建這個模組，必須另外安裝 MSI：`n" +
+                 "       https://www.iis.net/downloads/microsoft/httpplatformhandler`n" +
+                 "       未安裝時所有請求都會回 HTTP 500。")
+}
 
-        # 若路徑含空白，登錄的 arguments 也必須帶引號，才會與 web.config 一致。
-        $expectedArgs = if ($wfastcgiPy.Contains(' ')) { "`"$wfastcgiPy`"" } else { $wfastcgiPy }
-
-        if ($fastCgiResult.Output -notmatch [regex]::Escape($pythonExe)) {
-            $fixCmd = "& `"$appcmd`" set config -section:system.webServer/fastCgi `"/+[fullPath='$pythonExe',arguments='$expectedArgs']`" /commit:apphost"
-            Add-Result -Status FAIL -Check "IIS FastCGI 已登錄對應的 python.exe" `
-                -Detail "applicationHost.config 內找不到此路徑，可在 IIS Manager -> 伺服器層級 -> FastCGI 設定 新增，或用系統管理員權限執行：`n       $fixCmd"
-        } else {
-            Add-Result -Status PASS -Check "IIS FastCGI 已登錄對應的 python.exe" -Detail $pythonExe
-
-            # python.exe 有登錄不代表 arguments 正確；路徑含空白卻沒加引號一樣會啟動失敗。
-            if ($wfastcgiPy.Contains(' ')) {
-                if ($fastCgiResult.Output -match [regex]::Escape("arguments=`"$wfastcgiPy`"") -or
-                    $fastCgiResult.Output -match [regex]::Escape("&quot;$wfastcgiPy&quot;")) {
-                    Add-Result -Status PASS -Check "IIS FastCGI 登錄的 arguments 已正確加引號"
-                } else {
-                    Add-Result -Status FAIL -Check "IIS FastCGI 登錄的 arguments 已正確加引號" `
-                        -Detail ("登錄的 arguments 疑似未加引號，路徑含空白時會導致 0x00000002 啟動失敗。`n" +
-                                 "       請重新登錄 (先移除舊的再新增)：`n" +
-                                 "       & `"$appcmd`" set config -section:system.webServer/fastCgi `"/-[fullPath='$pythonExe',arguments='$wfastcgiPy']`" /commit:apphost`n" +
-                                 "       & `"$appcmd`" set config -section:system.webServer/fastCgi `"/+[fullPath='$pythonExe',arguments='$expectedArgs']`" /commit:apphost")
-                }
-            }
-        }
+# HttpPlatformHandler 的 stdout log 目錄必須存在且可寫，否則排錯時完全沒有線索
+if ($stdoutLogPath) {
+    $stdoutDir = Split-Path -Parent $stdoutLogPath
+    if (Test-Path $stdoutDir) {
+        Add-Result -Status PASS -Check "stdout log 目錄存在" -Detail $stdoutDir
     } else {
-        Add-Result -Status WARN -Check "IIS FastCGI 登錄檢查" -Detail "找不到 appcmd.exe，略過"
+        Add-Result -Status FAIL -Check "stdout log 目錄存在" `
+            -Detail "找不到 $stdoutDir，HttpPlatformHandler 會寫不出 log（請建立該資料夾並給 AppPool 帳號 Modify 權限）"
     }
 }
 
@@ -456,6 +501,110 @@ if (Test-WritablePath -Path $AppRoot) {
     Add-Result -Status FAIL -Check "根目錄可寫入 (data.json / access_log.txt / app.log)" -Detail "$AppRoot 無法寫入"
 }
 
+# 10-1. 資料來源與 PostgreSQL 連線
+#
+# DATA_BACKEND=json 時（預設）整段只做提示，不會因為沒有資料庫而判定失敗；
+# 切成 postgres 之後才會真的去連線並檢查 schema。
+$envFilePath = Join-Path $AppRoot '.env'
+$dataBackend = 'json'
+$backendSource = '預設值'
+
+$webConfigBackend = ($envVars | Where-Object { $_.name -eq 'DATA_BACKEND' }).value
+if ($webConfigBackend) { $dataBackend = $webConfigBackend; $backendSource = 'web.config' }
+
+if (Test-Path $envFilePath) {
+    Add-Result -Status PASS -Check ".env 存在" -Detail $envFilePath
+    # .env 會覆蓋 web.config 的設定（db.py 在讀取環境變數前先 load_dotenv）
+    $envBackendLine = Get-Content $envFilePath |
+        Where-Object { $_ -match '^\s*DATA_BACKEND\s*=\s*(\S+)' } | Select-Object -Last 1
+    if ($envBackendLine -and $envBackendLine -match '^\s*DATA_BACKEND\s*=\s*(\S+)') {
+        $dataBackend = $Matches[1]; $backendSource = '.env'
+    }
+
+    # .env 是機密檔，不該被一般使用者讀到
+    try {
+        $envAcl = Get-Acl $envFilePath
+        $looseAccess = $envAcl.Access | Where-Object {
+            $_.IdentityReference -match 'Everyone|Users|Authenticated Users' -and
+            $_.FileSystemRights -match 'Read|FullControl|Modify'
+        }
+        if ($looseAccess) {
+            Add-Result -Status WARN -Check ".env 權限已收斂" `
+                -Detail ("$envFilePath 目前對 $(($looseAccess.IdentityReference | Select-Object -Unique) -join '、') 開放讀取。`n" +
+                         "       這個檔案含資料庫密碼，建議只保留 SYSTEM、Administrators 與 IIS AppPool 帳號。")
+        } else {
+            Add-Result -Status PASS -Check ".env 權限已收斂"
+        }
+    } catch {
+        Add-Result -Status WARN -Check ".env 權限檢查" -Detail $_.Exception.Message
+    }
+} else {
+    Add-Result -Status WARN -Check ".env 存在" `
+        -Detail "找不到 $envFilePath。只跑 DATA_BACKEND=json 時可以不用；要接 PostgreSQL 請從 .env.example 複製一份。"
+}
+
+Add-Result -Status PASS -Check "資料來源設定 (DATA_BACKEND)" -Detail "$dataBackend（來自 $backendSource）"
+
+# 密碼不該出現在進版控的 web.config 裡
+if ($envVars | Where-Object { $_.name -match 'PGPASSWORD|BUILDING_DB_DSN' }) {
+    Add-Result -Status FAIL -Check "資料庫機密未寫進 web.config" `
+        -Detail ("web.config 內出現 PGPASSWORD 或 BUILDING_DB_DSN。`n" +
+                 "       web.config 是進版控的檔案，密碼寫在這裡等於 commit 進 git，`n" +
+                 "       請改放部署機的 .env。")
+} else {
+    Add-Result -Status PASS -Check "資料庫機密未寫進 web.config"
+}
+
+if ($dataBackend -eq 'postgres') {
+    if (-not $pythonUsable) {
+        Add-Result -Status FAIL -Check "PostgreSQL 連線" -Detail "python.exe 無法啟動，略過資料庫檢查"
+    } else {
+        # 直接用專案的 db.py 連線，確保檢查走的是程式實際會用的那條路徑
+        $probe = @'
+import sys
+sys.path.insert(0, sys.argv[1])
+import db
+ok, message = db.ping()
+print(("OK|" if ok else "FAIL|") + message)
+if ok:
+    try:
+        applied = db.applied_migrations()
+        print("MIGRATIONS|" + (",".join(applied) if applied else "(none)"))
+    except Exception as exc:
+        print("MIGRATIONS|ERROR: %s" % exc)
+db.close_pool()
+'@
+        $probeFile = Join-Path $env:TEMP "building-db-probe-$PID.py"
+        # 探測腳本全是 ASCII，用 ASCII 寫出可避免 PowerShell 5.1 加上 BOM
+        Set-Content -Path $probeFile -Value $probe -Encoding ASCII
+        $probeResult = Invoke-Native -FilePath $pythonExe -ArgumentList @($probeFile, $AppRoot)
+        Remove-Item $probeFile -ErrorAction SilentlyContinue
+
+        if ($probeResult.Output -match 'OK\|(.*)') {
+            Add-Result -Status PASS -Check "PostgreSQL 連線" -Detail $Matches[1].Trim()
+
+            if ($probeResult.Output -match '(?m)^MIGRATIONS\|(.*)$') {
+                $applied = $Matches[1].Trim()
+                if ($applied -eq '(none)' -or $applied -like 'ERROR:*') {
+                    Add-Result -Status FAIL -Check "schema migration 已套用" `
+                        -Detail ("資料庫內找不到已套用的 migration（$applied）。`n" +
+                                 "       請先執行：.\scripts\run-migrations.ps1")
+                } else {
+                    Add-Result -Status PASS -Check "schema migration 已套用" -Detail $applied
+                }
+            }
+        } else {
+            Add-Result -Status FAIL -Check "PostgreSQL 連線" `
+                -Detail ("連線失敗：`n       " + ($probeResult.Output -replace "`n", "`n       ") + "`n" +
+                         "       請確認 .env 的 PGHOST / PGDATABASE / PGUSER / PGPASSWORD，" +
+                         "以及防火牆與 sslmode 設定。")
+        }
+    }
+} else {
+    Add-Result -Status PASS -Check "PostgreSQL 檢查" `
+        -Detail "DATA_BACKEND 為 $dataBackend，資料仍走地端 JSON 檔案，略過資料庫檢查"
+}
+
 # 11. AD 網域加入狀態
 try {
     $cs = Get-CimInstance Win32_ComputerSystem
@@ -469,6 +618,10 @@ try {
 }
 
 # 12. 對外 CDN 連線 (前端依賴)
+#
+# 注意：這些 CDN 是「使用者的瀏覽器」去載入的，不是這台 Server。
+# Server 連不到外網不代表畫面會壞 —— 真正要確認的是使用者端能不能連到。
+# 這裡測 Server 端只是拿來當「這個環境是否對外封閉」的粗略指標。
 $cdnHosts = @('cdn.tailwindcss.com', 'unpkg.com', 'cdn.jsdelivr.net')
 foreach ($h in $cdnHosts) {
     try {
@@ -476,7 +629,11 @@ foreach ($h in $cdnHosts) {
         if ($test.TcpTestSucceeded) {
             Add-Result -Status PASS -Check "可連線 CDN: $h"
         } else {
-            Add-Result -Status WARN -Check "可連線 CDN: $h" -Detail "連線失敗，若此環境無法連外網，前端畫面會壞掉，需改成本地化資源"
+            Add-Result -Status WARN -Check "可連線 CDN: $h" `
+                -Detail ("Server 連不到（內網環境本來就會這樣，不影響部署）。`n" +
+                         "       這些資源是使用者的瀏覽器去載入的，請改用一台一般使用者的電腦`n" +
+                         "       開啟平台確認畫面正常。若使用者端也連不到，前端樣式與圖示會壞掉，`n" +
+                         "       需要把 Tailwind / Lucide / Chart.js / xlsx 改成本地化資源。")
         }
     } catch {
         Add-Result -Status WARN -Check "可連線 CDN: $h" -Detail $_.Exception.Message
