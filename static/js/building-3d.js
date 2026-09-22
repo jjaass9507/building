@@ -25,6 +25,7 @@ const floorFacts = (floor) => `<span class="building-3d-facts"><span>樓高 <str
 
 const isSummaryFloor = (floor) => String(floor || '').trim().toUpperCase() === 'ALL';
 const isRaftFoundationFloor = (floor) => /筏\s*基|raft/i.test(String(floor ?? ''));
+const isRoofFloor = (floor) => /^(?:R\d*F|\d+RF)$/i.test(String(floor ?? '').replace(/\s+/g, ''));
 const compare3DFloors = (a, b) => {
     const aIsRaft = isRaftFoundationFloor(a.floor);
     const bIsRaft = isRaftFoundationFloor(b.floor);
@@ -91,7 +92,7 @@ export const renderBuilding3DModal = (state, buildingMeta, processedData) => {
         return `
             <div class="building-3d-floor ${selectedClass} ${plannedClass}" style="--floor-width:${width}px;--floor-depth:${depth}px;--floor-level:${level}px;--floor-order:${index}">
                 <button type="button" class="building-3d-volume" onclick="window.app.select3DFloor(decodeURIComponent('${encodedFloorId}'))" aria-label="查看 ${escapeHtml(floor.floor)} 樓層資訊">
-                    <span class="building-3d-top"><span class="building-3d-roof-line"></span></span>
+                    ${isRoofFloor(floor.floor) ? '' : '<span class="building-3d-top"><span class="building-3d-roof-line"></span></span>'}
                     <span class="building-3d-front" data-floor-face="${escapeHtml(floor.id)}">
                         <span class="building-3d-window-band"></span>
                         <span class="building-3d-face-info">

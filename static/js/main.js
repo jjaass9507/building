@@ -2,7 +2,7 @@ import { processRawData } from './data.js';
 import { formatArea, apiUrl, filterRowsByScope } from './utils.js?v=20260916-unified-scope';
 import { renderHeader, renderMatrix, renderPanel, renderCompareTable } from './components.js?v=20260916-cleanroom-summary';
 import { renderBuilding3DModal, bindBuilding3DInteractions } from './building-3d.js?v=20260916-raft-bottom-no-roof-cap';
-import { destroyProcessAnalysisChart, drawProcessAnalysisChart, fetchProcessGroupConfig, openProcessGroupAdmin, renderProcessAnalysisModal } from './process-analysis.js?v=20260916-unified-scope';
+import { destroyProcessAnalysisChart, drawProcessAnalysisChart, fetchProcessGroupConfig, openProcessGroupAdmin, renderProcessAnalysisModal } from './process-analysis.js?v=20260917-status-split-v2';
 import { configuredTrendReferences, fetchTrendReferenceConfig, formatEquivalentBuildingCount, getEquivalentBuildingCount, getTrendReferenceArea, openTrendReferenceAdmin } from './trend-reference.js?v=20260916-trend-reference';
 
 // --- 狀態管理 (State) ---
