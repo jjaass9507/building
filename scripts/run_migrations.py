@@ -30,7 +30,15 @@ import db  # noqa: E402
 MIGRATIONS_DIR = os.path.join(_APP_ROOT, 'migrations')
 
 _BOOTSTRAP_SQL = """
-CREATE SCHEMA IF NOT EXISTS building_mgmt;
+-- 先檢查再建立：CREATE SCHEMA IF NOT EXISTS 即使 schema 已存在，
+-- 仍然需要資料庫層級的 CREATE 權限。migrator 帳號通常只有 schema 的擁有權，
+-- 先檢查可以讓日常 migration 不必依賴那個權限（只有第一次建立時才需要）。
+DO $schema$
+BEGIN
+    IF to_regnamespace('building_mgmt') IS NULL THEN
+        CREATE SCHEMA building_mgmt;
+    END IF;
+END $schema$;
 CREATE TABLE IF NOT EXISTS building_mgmt.schema_migrations (
     version    text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now(),
@@ -42,6 +50,25 @@ CREATE TABLE IF NOT EXISTS building_mgmt.schema_migrations (
 
 def _log(message):
     print(message, flush=True)
+
+
+def _use_migrator_account():
+    """有設定 migrator 帳密時改用它連線。
+
+    應用程式平常以 svc_building_mgmt_rw 連線（只有 DML），
+    跑 migration 才需要 svc_building_mgmt_migrator（有 DDL）。
+    兩組帳密放在同一份 .env，這裡在建立連線池之前把行程的環境變數換掉，
+    密碼仍然走 PGPASSWORD、不會進到連線字串裡。
+    """
+    user = (os.environ.get('PGUSER_MIGRATOR') or '').strip()
+    if not user:
+        return None
+
+    password = os.environ.get('PGPASSWORD_MIGRATOR')
+    os.environ['PGUSER'] = user
+    if password is not None:
+        os.environ['PGPASSWORD'] = password
+    return user
 
 
 def _checksum(text):
@@ -88,7 +115,12 @@ def main():
                         help='略過 003_roles_grants.sql（需要 CREATEROLE 權限，通常由 DBA 執行）')
     args = parser.parse_args()
 
+    migrator = _use_migrator_account()
     _log(f"資料庫目標：{db.describe_target()}")
+    if migrator:
+        _log(f"使用 migration 帳號：{migrator}")
+    else:
+        _log("未設定 PGUSER_MIGRATOR，沿用 .env 的 PGUSER 連線。")
 
     try:
         files = discover(skip_roles=args.skip_roles)

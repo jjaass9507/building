@@ -174,14 +174,20 @@ class BackendParityTests(unittest.TestCase):
         with db.connection() as conn:
             conn.autocommit = True
             with conn.cursor() as cur:
+                # 用 DELETE 而不是 TRUNCATE：TRUNCATE 需要表的擁有權，
+                # 而應用程式實際使用的 svc_building_mgmt_rw 只有 DML。
+                # 測試要走跟正式環境相同的權限，才驗得出權限設定是否足夠。
                 cur.execute("""
-                    TRUNCATE building_mgmt.buildings,
-                             building_mgmt.process_groups,
-                             building_mgmt.utility_metrics,
-                             building_mgmt.app_settings,
-                             building_mgmt.dataset_snapshots,
-                             building_mgmt.data_change_log
-                    RESTART IDENTITY CASCADE
+                    DELETE FROM building_mgmt.floor_facility_areas;
+                    DELETE FROM building_mgmt.floors;
+                    DELETE FROM building_mgmt.buildings;
+                    DELETE FROM building_mgmt.process_group_members;
+                    DELETE FROM building_mgmt.process_groups;
+                    DELETE FROM building_mgmt.utility_metric_points;
+                    DELETE FROM building_mgmt.utility_metrics;
+                    DELETE FROM building_mgmt.app_settings;
+                    DELETE FROM building_mgmt.dataset_snapshots;
+                    DELETE FROM building_mgmt.data_change_log;
                 """)
                 cur.execute("""
                     UPDATE building_mgmt.dataset_state

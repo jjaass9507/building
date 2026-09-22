@@ -18,7 +18,15 @@
 
 BEGIN;
 
-CREATE SCHEMA IF NOT EXISTS building_mgmt;
+-- 先檢查再建立：CREATE SCHEMA IF NOT EXISTS 即使 schema 已存在，
+-- 仍然需要資料庫層級的 CREATE 權限。migrator 帳號通常只有 schema 的擁有權，
+-- 先檢查可以讓日常 migration 不必依賴那個權限（只有第一次建立時才需要）。
+DO $schema$
+BEGIN
+    IF to_regnamespace('building_mgmt') IS NULL THEN
+        CREATE SCHEMA building_mgmt;
+    END IF;
+END $schema$;
 
 -- -----------------------------------------------------------------------------
 -- migration 版本紀錄（scripts/run-migrations.ps1 會讀寫這張表）

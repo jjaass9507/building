@@ -84,6 +84,8 @@ building/
 │   ├── deploy-iis.ps1         # IIS 部署（獨立網站或子應用程式，支援 -WhatIfOnly 預演）
 │   ├── switch-site.ps1        # 正式切換：把線上網址改指到新版，失敗自動回退
 │   ├── build-offline-bundle.ps1  # 在開發機產生 wheels\ 並驗證離線可裝
+│   ├── create-db-users.ps1    # 互動式建立兩個服務帳號（密碼不落檔案）
+│   ├── create_db_users.py     # 上面那支的實作
 │   ├── run-migrations.ps1     # 套用 schema、匯入資料與 hash 驗收
 │   ├── run_migrations.py      # migration 執行器
 │   ├── migrate_json_to_pg.py  # 地端 JSON → PostgreSQL 匯入與驗收
@@ -629,15 +631,47 @@ store/
 | `building_mgmt.<表名>` | 內部表，只有應用程式存取 |
 | `building_mgmt.v_<名稱>` | 對外 view，給 BI／報表 |
 
-| 角色 | 權限 |
-|---|---|
-| `building_mgmt_migrate` | schema 與物件的擁有者，只在跑 migration 時使用 |
-| `building_mgmt_app` | 應用程式日常使用，只有 DML，不能改結構 |
-| `building_mgmt_reader` | 外部 BI，**只授權 7 個 `v_` 開頭的 view**，內部表一個都看不到 |
+| 帳號／角色 | 類型 | 權限 |
+|---|---|---|
+| `svc_building_mgmt_migrator` | 登入帳號 | schema 與物件的擁有者，只在跑 migration 時使用 |
+| `svc_building_mgmt_rw` | 登入帳號 | 應用程式日常使用，只有 DML，**不能改結構** |
+| `building_mgmt_reader` | 群組角色 | 外部 BI，**只授權 7 個 `v_` 開頭的 view**，內部表一個都看不到 |
 
-schema 與角色名稱都帶 `building_mgmt` 字樣，在共用的資料庫主機上一眼就能看出
-是建物管理平台的資料。角色尤其重要 —— PostgreSQL 的角色是**整個 cluster 共用**的，
+`building_mgmt_reader` 是 NOLOGIN 的群組角色，不是實際帳號。BI 的登入帳號由 DBA
+建立後 `GRANT` 進這個群組，多個帳號共用同一套授權，新增帳號不必再動 migration。
+
+schema 與帳號名稱都帶 `building_mgmt` 字樣，在共用的資料庫主機上一眼就能看出
+是建物管理平台的資料。帳號尤其重要 —— PostgreSQL 的角色是**整個 cluster 共用**的，
 撞名風險比 schema 還高。
+
+### 建立服務帳號
+
+密碼不進版控，所以 migration 只負責授權，帳號用互動式腳本建立
+（密碼不落檔案、不進指令歷史、不寫 log）：
+
+```powershell
+.\scripts\create-db-users.ps1 -AdminUser postgres
+```
+
+需要用有 CREATEROLE 權限的帳號執行。帳號已存在時只更新密碼，不動既有授權。
+只想看目前狀態就加 `-Status`。
+
+建好之後把兩組帳密填進 `.env`：
+
+```ini
+PGUSER=svc_building_mgmt_rw                    # 應用程式日常使用
+PGPASSWORD=...
+PGUSER_MIGRATOR=svc_building_mgmt_migrator     # 只有跑 migration 時才用
+PGPASSWORD_MIGRATOR=...
+```
+
+`run-migrations.ps1` 有設定 `PGUSER_MIGRATOR` 時會自動改用它連線，
+應用程式平常仍然用權限最小的 `svc_building_mgmt_rw`。
+
+> **要請 DBA 做的**：`svc_building_mgmt_migrator` 需要資料庫層級的 `CREATE` 權限
+> 才能第一次建立 schema：
+> `GRANT CREATE, CONNECT ON DATABASE <資料庫名> TO svc_building_mgmt_migrator;`
+> 之後的 migration 就不再需要這個權限。
 
 表與 view 同在一個 schema，所以隔離不是靠「不給 USAGE」，而是**逐一授權 view**。
 `003_roles_grants.sql` 最後有一段防呆：只要有任何非 `v_` 開頭的物件被授權給 reader，
