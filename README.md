@@ -2,6 +2,12 @@
 
 建物管理平台是一個以 **Flask + Tailwind CSS + Vanilla JavaScript** 建置的建物資訊視覺化儀表板。系統會讀取建物樓層資料，整理成可互動的矩陣式看板，協助快速查看各廠棟、樓層、面積配置、無塵室面積、生產週邊、廠務設施、公設與樓高等資訊。
 
+資料可放在地端 JSON 檔案，也可改接 PostgreSQL（見「[PostgreSQL 資料庫](#postgresql-資料庫)」）。
+
+> 相關文件：
+> [`HANDOFF.md`](HANDOFF.md)（目前進度、部署順序與待辦）、
+> [`WORKLOG.md`](WORKLOG.md)（設計決策與開發過程）
+
 ---
 
 ## 專案特色
@@ -16,13 +22,14 @@
 - **側邊資訊面板**：點擊樓層或廠棟後，可顯示更詳細的資料摘要。
 - **單棟 3D 示意圖**：由現有樓層資料自動堆疊單棟模型，可旋轉、縮放、展開樓層並點選查看空間組成。
 - **Windows AD 身份辨識**：透過 IIS Windows Integrated Authentication 取得 `REMOTE_USER`。
-- **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`。
+- **角色權限控管**：透過 `permissions.json` 設定 `admin`、`user`、`viewer`（資料表已備妥，日後可改由資料庫管理）。
 - **Admin 網頁上傳更新資料**：admin 可直接在頁面上傳樓層面積 Excel，系統自動清洗並更新 `data.json`。
 - **Admin 表格式資料維護**：管理人員可在接近原始 Excel 欄位順序的介面新增、修改、移動或刪除建物與樓層資料。
 - **雙格式 Excel 匯出**：提供可重新上傳的人員閱讀版，以及固定工作表、固定英文欄位的標準資料版。
 - **異動稽核與衝突防護**：每次平台維護必須填寫生效日期、異動類型與原因，並保留來源、維護人員、面積淨異動與修改摘要；多人同時編輯時阻止舊版本覆蓋新資料。
-- **資料版本留存**：每次更新前會先把上一版 `data.json` 備份到 `data_backups/`。
-- **IIS 部署支援**：HttpPlatformHandler + Waitress，已包含 `web.config` 範例與一鍵部署腳本。
+- **資料版本留存**：每次更新前會先把上一版 `data.json` 備份到 `data_backups/`；接資料庫時每個 revision 另存一份完整快照。
+- **可切換的資料來源**：`DATA_BACKEND` 決定走地端 JSON 或 PostgreSQL，切換不需要改任何路由或前端。
+- **IIS 部署支援**：HttpPlatformHandler + Waitress，已包含 `web.config` 範例、一鍵部署腳本、正式切換腳本與離線打包腳本。
 - **存取紀錄**：後端會記錄使用者帳號、IP、操作、上傳與權限拒絕紀錄至 `access_log.txt`。
 
 ---
@@ -40,7 +47,7 @@
 - PostgreSQL 18 + psycopg 3（可選資料來源，見「PostgreSQL 資料庫」章節）
 - IIS HttpPlatformHandler 部署設定
 - Windows Integrated Authentication / `REMOTE_USER`
-- Role-Based Access Control（`permissions.json` 或資料庫）
+- Role-Based Access Control（目前讀 `permissions.json`）
 
 ### 前端
 
@@ -63,6 +70,8 @@ building/
 ├── building_data_manager.py   # 資料驗證、版本、稽核與雙格式 Excel 匯出
 ├── web.config
 ├── README.md
+├── WORKLOG.md                 # 設計決策與開發過程
+├── HANDOFF.md                 # 目前進度、部署順序與待辦
 ├── requirements.txt
 ├── .env.example               # 部署機環境設定範本（複製成 .env 後填寫）
 ├── .env                       # 資料庫帳密等機密，不納入版控
@@ -1106,19 +1115,25 @@ access_log.txt
 - 前端目前採用 ES Modules，因此需透過 HTTP server 執行，不建議直接用檔案方式開啟 HTML。
 - Tailwind CSS 與 Lucide Icons 使用 CDN，部署環境需能連線至 CDN，否則需改為本地化資源。
 - `components.js` 內含大量 UI HTML template，若後續功能持續擴充，建議逐步拆分為更細的元件模組。
-- `data.json` 目前以檔案方式管理，若資料量變大或需要多人同時更新，可考慮改為資料庫。
+- `data.json` 以檔案方式管理仍是預設行為；需要多人同時更新或對外供資料時，把 `DATA_BACKEND`
+  改成 `postgres` 即可（見「PostgreSQL 資料庫」）。
+- 所有檔案讀寫都集中在 `store/`，`app.py` 不再直接碰檔案。要新增資料來源時加一個 store 模組即可。
 - 若要接正式 AD 群組，可保留 `require_roles()`，只替換 `get_user_role()` 的角色查詢來源。
 
 ---
 
 ## 後續可改善項目
 
-- 新增 `data.sample.json`
-- 增加資料備份還原功能
+資料庫這條線的階段規劃（Phase 3 之後）與正式機部署順序整理在
+[`HANDOFF.md`](HANDOFF.md)，設計決策的來龍去脈在 [`WORKLOG.md`](WORKLOG.md)。
+
+- 停用 JSON 鏡射（`DATA_MIRROR_JSON=false`），資料庫成為唯一來源
+- 將 `permissions.json` 改接資料庫（`building_mgmt.user_roles` 已建好，`app.py` 尚未接）
+- 將 `access_log.txt` 改寫資料庫（`building_mgmt.access_log` 已建好，按月分割）
+- 增加資料備份還原功能（`building_mgmt.dataset_snapshots` 已保留每個 revision 的完整快照）
 - 增加上傳紀錄查詢頁
-- 將 CDN 資源改成本地靜態檔
+- 將 CDN 資源改成本地靜態檔（Tailwind CDN 是 JIT 編譯器，本地化需要加建置步驟）
 - 將 `components.js` 拆分為 Header、Matrix、Panel 等模組
-- 將 `permissions.json` 改接 AD Group 或資料庫
 - 依角色隱藏 / 顯示更多前端功能按鈕
 - 補上 API 錯誤畫面與資料格式驗證
 - 增加部署文件，例如 IIS 設定截圖或 SOP
